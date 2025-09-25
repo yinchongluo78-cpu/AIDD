@@ -1,0 +1,55 @@
+name: Deploy API to ECS
+
+on:
+  push:
+    branches: [ main ]
+
+concurrency:
+  group: deploy-api
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (for context)
+        uses: actions/checkout@v4
+
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USER }}
+          port: ${{ secrets.ECS_PORT }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          script: |
+            set -e
+            API_DIR="${{ secrets.ECS_PATH }}"            # /root/myproject/lyc2/api
+            APP_DIR="$(dirname "$API_DIR")"             # /root/myproject/lyc2
+
+            echo "[1/5] cd $APP_DIR，并拉取最新代码"
+            cd "$APP_DIR"
+            git config --global --add safe.directory "$APP_DIR"
+            git fetch --all
+            git checkout main
+            git reset --hard origin/main
+
+            echo "[2/5] 确保 pnpm 可用"
+            if ! command -v pnpm >/dev/null 2>&1; then
+              npm i -g pnpm
+            fi
+
+            echo "[3/5] 安装依赖 + 构建（API）"
+            cd "$API_DIR"
+            pnpm install --prefer-offline
+            pnpm build
+
+            echo "[4/5] 用 PM2 重启服务（不存在就启动）"
+            if pm2 describe super-scholar-api >/dev/null 2>&1; then
+              pm2 reload super-scholar-api
+            else
+              pm2 start ecosystem.config.js
+            fi
+
+            echo "[5/5] 保存 PM2 进程列表，便于重启自启"
+            pm2 save
