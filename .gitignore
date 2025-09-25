@@ -9,3 +9,7 @@ dist/
 .vscode/
 *.swp
 *.swo
+# local env
+api/.env
+web/.env
+
