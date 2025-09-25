@@ -1,0 +1,13 @@
+{
+  "name": "mono-project",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Monorepo项目",
+  "scripts": {
+    "dev": "concurrently \"pnpm --filter web dev\" \"pnpm --filter api dev\"",
+    "build": "pnpm --filter web build && pnpm --filter api build"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

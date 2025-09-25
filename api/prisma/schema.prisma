@@ -1,0 +1,110 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String      @id @default(uuid()) @db.Uuid
+  email        String      @unique
+  passwordHash String      @map("password_hash")
+  createdAt    DateTime    @default(now()) @map("created_at")
+
+  profile       Profile?
+  categories    KbCategory[]
+  documents     KbDocument[]
+  conversations Conversation[]
+
+  @@map("users")
+}
+
+model Profile {
+  userId    String   @id @db.Uuid @map("user_id")
+  name      String?
+  age       Int?
+  grade     String?
+  phone     String?
+  avatarUrl String?  @map("avatar_url")
+  updatedAt DateTime @default(now()) @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("profiles")
+}
+
+model KbCategory {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid @map("user_id")
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documents KbDocument[]
+
+  @@map("kb_categories")
+  @@index([userId, name])
+}
+
+model KbDocument {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid @map("user_id")
+  categoryId String   @db.Uuid @map("category_id")
+  filename   String
+  fileExt    String   @map("file_ext")
+  fileSize   BigInt   @map("file_size")
+  ossKey     String   @map("oss_key")
+  status     String
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category KbCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  chunks   KbChunk[]
+
+  @@map("kb_documents")
+  @@index([userId, categoryId])
+}
+
+model KbChunk {
+  id        String   @id @default(uuid()) @db.Uuid
+  docId     String   @db.Uuid @map("doc_id")
+  seq       Int
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  document KbDocument @relation(fields: [docId], references: [id], onDelete: Cascade)
+
+  @@map("kb_chunks")
+  @@index([docId, seq])
+}
+
+model Conversation {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid @map("user_id")
+  title     String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@map("conversations")
+  @@index([userId, createdAt])
+}
+
+model Message {
+  id              String    @id @default(uuid()) @db.Uuid
+  conversationId  String    @db.Uuid @map("conversation_id")
+  role            String
+  content         String
+  imageOssKey     String?   @map("image_oss_key")
+  ocrText         String?   @map("ocr_text")
+  citations       Json?
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+  @@index([conversationId, createdAt])
+}
