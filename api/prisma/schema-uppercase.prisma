@@ -1,0 +1,117 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String      @id @default(uuid()) @db.Uuid
+  email        String      @unique
+  passwordHash String      @map("password_hash")
+  createdAt    DateTime    @default(now()) @map("created_at")
+
+  profile        Profile?
+  conversations  ConversationParticipant[]
+  messages       Message[]
+  kbCategories   KbCategory[]
+  kbDocuments    KbDocument[]
+}
+
+model Profile {
+  id        String  @id @default(uuid()) @db.Uuid
+  userId    String  @unique @map("user_id") @db.Uuid
+  name      String?
+  avatarUrl String? @map("avatar_url")
+  age       Int?
+  grade     String?
+  phone     String?
+  location  String?
+
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Conversation {
+  id        String   @id @default(uuid()) @db.Uuid
+  title     String   @default("新对话")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  participants ConversationParticipant[]
+  messages     Message[]
+}
+
+model ConversationParticipant {
+  id             String       @id @default(uuid()) @db.Uuid
+  conversationId String       @map("conversation_id") @db.Uuid
+  userId         String       @map("user_id") @db.Uuid
+  joinedAt       DateTime     @default(now()) @map("joined_at")
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+}
+
+model Message {
+  id             String       @id @default(uuid()) @db.Uuid
+  conversationId String       @map("conversation_id") @db.Uuid
+  userId         String?      @map("user_id") @db.Uuid
+  role           String       // 'user' or 'assistant'
+  content        String       @db.Text
+  imageOssKey    String?      @map("image_oss_key")
+  ocrResult      String?      @map("ocr_result") @db.Text
+  kbCategoryId   String?      @map("kb_category_id") @db.Uuid
+  citations      Json?        @db.Json
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  kbCategory     KbCategory?  @relation(fields: [kbCategoryId], references: [id], onDelete: SetNull)
+}
+
+model KbCategory {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  name        String
+  description String?  @db.Text
+  color       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documents   KbDocument[]
+  messages    Message[]
+
+  @@unique([userId, name])
+}
+
+model KbDocument {
+  id           String     @id @default(uuid()) @db.Uuid
+  categoryId   String     @map("category_id") @db.Uuid
+  userId       String     @map("user_id") @db.Uuid
+  name         String
+  ossKey       String     @map("oss_key")
+  size         Int
+  mimeType     String     @map("mime_type")
+  uploadedAt   DateTime   @default(now()) @map("uploaded_at")
+  processedAt  DateTime?  @map("processed_at")
+  status       String     @default("pending") // pending, processing, completed, failed
+
+  category     KbCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chunks       KbChunk[]
+}
+
+model KbChunk {
+  id       String     @id @default(uuid()) @db.Uuid
+  docId    String     @map("doc_id") @db.Uuid
+  content  String     @db.Text
+  seq      Int
+
+  document KbDocument @relation(fields: [docId], references: [id], onDelete: Cascade)
+
+  @@index([docId, seq])
+}

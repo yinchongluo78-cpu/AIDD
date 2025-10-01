@@ -1,23 +1,44 @@
 import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
+import path from 'path'
+import { PrismaClient } from '@prisma/client'
+import authRoutes from './routes/auth'
+import usersRoutes from './routes/users'
+import conversationsRoutes from './routes/conversations'
+import kbRoutes from './routes/kb'
+import chatRoutes from './routes/chat'
+import uploadRoutes from './routes/upload'
 
 dotenv.config()
 
 const app = express()
-const PORT = process.env.PORT || 3000
+const PORT = process.env.PORT || 3001
+export const prisma = new PrismaClient()
 
 const corsOptions = {
-  origin: process.env.NODE_ENV === 'development' ? ['http://localhost:5173', 'http://localhost:5174'] : false,
+  origin: true, // 允许所有来源
   credentials: true
 }
 
 app.use(cors(corsOptions))
-app.use(express.json())
+// 增加请求体大小限制到120MB，支持大文件上传
+app.use(express.json({ limit: '120mb' }))
+app.use(express.urlencoded({ limit: '120mb', extended: true }))
+
+// 提供静态文件服务
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')))
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true })
 })
+
+app.use('/api/auth', authRoutes)
+app.use('/api/users', usersRoutes)
+app.use('/api/conversations', conversationsRoutes)
+app.use('/api/kb', kbRoutes)
+app.use('/api/chat', chatRoutes)
+app.use('/api/upload', uploadRoutes)
 
 app.listen(PORT, () => {
   console.log(`后端服务运行在 http://localhost:${PORT}`)

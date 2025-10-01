@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>测试流式API</title>
+</head>
+<body>
+    <button onclick="testStream()">测试流式响应</button>
+    <div id="output"></div>
+
+    <script>
+    async function testStream() {
+        const output = document.getElementById('output');
+        output.innerHTML = '开始测试...<br>';
+
+        const token = localStorage.getItem('token');
+        const conversationId = '7ec1ddff-a7a9-47c4-b0e9-25e25c5b0155'; // 使用一个现有的对话ID
+
+        try {
+            const response = await fetch(`http://localhost:3000/api/conversations/${conversationId}/messages/stream`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    content: '你好'
+                })
+            });
+
+            if (!response.ok) {
+                output.innerHTML += `错误: ${response.status} ${response.statusText}<br>`;
+                return;
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const dataStr = line.slice(6);
+                        if (dataStr.trim()) {
+                            try {
+                                const data = JSON.parse(dataStr);
+                                if (data.type === 'stream') {
+                                    output.innerHTML += data.content;
+                                } else if (data.type === 'done') {
+                                    output.innerHTML += '<br>完成！';
+                                } else if (data.type === 'error') {
+                                    output.innerHTML += `<br>错误: ${data.message}`;
+                                }
+                            } catch (e) {
+                                console.error('解析错误:', e);
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            output.innerHTML += `<br>请求失败: ${error}`;
+        }
+    }
+    </script>
+</body>
+</html>

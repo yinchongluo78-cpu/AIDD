@@ -1,33 +1,28 @@
 <template>
-  <div id="app">
-    <nav>
-      <router-link to="/chat">对话</router-link> |
-      <router-link to="/kb">知识库</router-link>
-    </nav>
-    <router-view />
-  </div>
+  <router-view />
 </template>
 
 <script setup lang="ts">
 </script>
 
 <style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
 #app {
-  font-family: sans-serif;
-  padding: 20px;
-}
-
-nav {
-  margin-bottom: 20px;
-}
-
-nav a {
-  margin: 0 10px;
-  color: #42b883;
-  text-decoration: none;
-}
-
-nav a.router-link-active {
-  font-weight: bold;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
 }
 </style>
