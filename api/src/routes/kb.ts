@@ -102,10 +102,10 @@ router.get('/categories/:id/documents', authenticateToken, async (req: AuthReque
       orderBy: { createdAt: 'desc' }
     })
 
-    // 转换 BigInt 为普通数字
+    // 转换 BigInt 为普通数字（兼容 fileSize 与 size）
     const documentsResponse = documents.map(doc => ({
       ...doc,
-      fileSize: Number(doc.fileSize)
+      size: Number((doc as any).fileSize ?? (doc as any).size ?? 0)
     }))
     res.json(documentsResponse)
   } catch (error) {
@@ -127,10 +127,10 @@ router.get('/documents', authenticateToken, async (req: AuthRequest, res) => {
       orderBy: { createdAt: 'desc' }
     })
 
-    // 转换 BigInt 为普通数字
+    // 转换 BigInt 为普通数字（兼容 fileSize 与 size）
     const documentsResponse = documents.map(doc => ({
       ...doc,
-      fileSize: Number(doc.fileSize)
+      size: Number((doc as any).fileSize ?? (doc as any).size ?? 0)
     }))
     res.json(documentsResponse)
   } catch (error) {
@@ -168,33 +168,58 @@ router.post('/documents', authenticateToken, async (req: AuthRequest, res) => {
     }
 
     console.log('验证通过，创建文档记录...')
+    // 推导文件扩展名与 OSS Key（Postgres 模型要求）
+    const lowerName = String(name || '').toLowerCase()
+    const extFromName = lowerName.lastIndexOf('.') >= 0 ? lowerName.substring(lowerName.lastIndexOf('.')) : ''
+    const fileExt = type || extFromName || 'application/octet-stream'
+    let ossKey = url
+    if (typeof url === 'string' && url.includes('aliyuncs.com/')) {
+      ossKey = url.split('aliyuncs.com/')[1]
+    }
+
     const document = await prisma.kbDocument.create({
       data: {
+        // Postgres 模型字段
         filename: name,
-        fileExt: type,
-        ossKey: url,
-        fileSize: BigInt(size || 0),
-        status: 'uploaded',
+        fileExt: fileExt,
+        fileSize: BigInt(Number(size || 0)),
+        ossKey: ossKey,
+        status: 'pending',  // 新增：文档初始状态
+        // 兼容查询逻辑保留（若模型存在这些列）
+        name: name,
+        url: url,
+        // 关联字段
         userId: req.userId!,
         categoryId
-      }
+      } as any
     })
 
     console.log('文档记录创建成功:', document)
 
     // 异步解析和存储文档内容
-    parseAndStoreDocument(document.id, document.ossKey)
-      .then(chunkCount => {
-        console.log(`文档 ${document.filename} 解析完成，生成 ${chunkCount} 个切片`)
+    parseAndStoreDocument(document.id, document.url)
+      .then(async chunkCount => {
+        console.log(`文档 ${document.name} 解析完成，生成 ${chunkCount} 个切片`)
+        // 更新文档状态为已完成
+        await prisma.kbDocument.update({
+          where: { id: document.id },
+          data: { status: 'ready' }
+        })
       })
-      .catch(error => {
-        console.error(`文档 ${document.filename} 解析失败:`, error)
+      .catch(async error => {
+        console.error(`文档 ${document.name} 解析失败:`, error)
+        // 更新文档状态为失败
+        await prisma.kbDocument.update({
+          where: { id: document.id },
+          data: { status: 'failed' }
+        })
       })
 
     // 转换 BigInt 为普通数字再返回
     const documentResponse = {
       ...document,
-      fileSize: Number(document.fileSize)
+      // 统一返回 size 字段以兼容前端显示
+      size: Number((document as any).fileSize ?? (document as any).size ?? 0)
     }
     res.json(documentResponse)
   } catch (error) {
@@ -226,7 +251,7 @@ router.get('/documents/:id/content', authenticateToken, async (req: AuthRequest,
     const path = require('path')
 
     try {
-      const content = await fs.readFile(document.ossKey, 'utf-8')
+      const content = await fs.readFile(document.url, 'utf-8')
       res.type('text/plain').send(content)
     } catch (fileError) {
       console.error('读取文档文件失败:', fileError)
@@ -275,7 +300,7 @@ router.get('/documents/:id', authenticateToken, async (req: AuthRequest, res) =>
     // 转换BigInt为Number
     const documentResponse = {
       ...document,
-      fileSize: Number(document.fileSize)
+      size: Number(document.size)
     }
 
     res.json(documentResponse)
