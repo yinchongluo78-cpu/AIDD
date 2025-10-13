@@ -34,6 +34,24 @@
 
       <!-- 主聊天区域 -->
       <div class="chat-main">
+        <!-- 自定义指令状态栏 -->
+        <div v-if="currentConversationId" class="instructions-bar">
+          <div v-if="conversations.find(c => c.id === currentConversationId)?.customInstructions" class="instructions-status active">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+            </svg>
+            <span>已启用自定义指令</span>
+            <button class="instructions-btn" @click="openInstructionsModal">修改</button>
+          </div>
+          <div v-else class="instructions-status">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+            </svg>
+            <span>使用默认模式</span>
+            <button class="instructions-btn" @click="openInstructionsModal">设置指令</button>
+          </div>
+        </div>
+
         <div class="messages-container" ref="messagesContainer">
           <div
             v-for="msg in currentMessages"
@@ -51,7 +69,14 @@
             </div>
             <div class="message-content">
               <div v-if="msg.imageUrl" class="message-image">
-                <img :src="msg.imageUrl" alt="图片" />
+                <div class="image-wrapper" @click="openImageModal(msg.imageUrl)">
+                  <img :src="msg.imageUrl" alt="用户上传的图片" loading="lazy" @error="handleImageError" />
+                  <div class="image-overlay">
+                    <svg viewBox="0 0 24 24" width="24" height="24">
+                      <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" fill="white"/>
+                    </svg>
+                  </div>
+                </div>
               </div>
               <div v-if="msg.fileInfo" class="message-file">
                 <div class="file-icon">
@@ -74,7 +99,10 @@
                 </div>
               </div>
               <div class="message-text">
-                <span v-html="formatMessage(msg.content)"></span>
+                <!-- 用户消息：只处理换行，不进行数学公式渲染 -->
+                <span v-if="msg.role === 'user'" v-html="msg.content.replace(/\n/g, '<br>')"></span>
+                <!-- AI消息：流式传输中和完成后都进行完整的格式化处理 -->
+                <span v-else v-html="formatMessage(msg.content)"></span>
                 <span v-if="msg.isStreaming" class="typing-cursor">▊</span>
               </div>
             </div>
@@ -99,7 +127,7 @@
         <div class="input-container">
           <div class="input-wrapper">
             <!-- 知识库选择器 -->
-            <KnowledgeSelector @change="handleKnowledgeChange" />
+            <KnowledgeSelector ref="knowledgeSelector" @change="handleKnowledgeChange" />
 
             <div class="input-tools">
               <input
@@ -108,12 +136,15 @@
                 accept="image/*"
                 style="display: none"
                 @change="handleImageUpload"
+                @click="console.log('文件输入框被点击')"
               />
-              <button class="tool-btn" @click="$refs.imageInput.click()" title="上传图片">
+              <button class="tool-btn" @click="handleImageButtonClick" title="上传图片">
                 <svg viewBox="0 0 24 24" width="20" height="20">
                   <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" fill="currentColor"/>
                 </svg>
               </button>
+              
+
 
               <input
                 type="file"
@@ -149,8 +180,13 @@
             </div>
 
             <div v-if="uploadedImage" class="upload-preview image-preview">
-              <img :src="uploadedImage.preview" alt="预览" />
-              <button class="remove-btn" @click="uploadedImage = null">✕</button>
+              <div class="image-preview-wrapper">
+                <img :src="uploadedImage.preview" alt="图片预览" />
+                <div v-if="uploadedImage.uploading" class="upload-loading">
+                  <div class="spinner"></div>
+                </div>
+                <button class="remove-btn" @click.stop="uploadedImage = null">✕</button>
+              </div>
             </div>
 
             <div v-if="uploadedDoc" class="upload-preview doc-preview">
@@ -192,6 +228,14 @@
       >
         <div class="menu-item" @click="renameConversation">重命名</div>
         <div class="menu-item danger" @click="deleteConversation">删除</div>
+      </div>
+
+      <!-- 图片预览模态框 -->
+      <div v-if="imageModalUrl" class="image-modal-overlay" @click="closeImageModal">
+        <div class="image-modal-content" @click.stop>
+          <button class="modal-close-btn" @click="closeImageModal">✕</button>
+          <img :src="imageModalUrl" alt="图片预览" />
+        </div>
       </div>
 
       <!-- 上传文档到知识库弹窗 -->
@@ -300,6 +344,37 @@
         </div>
       </div>
 
+      <!-- 自定义指令弹窗 -->
+      <Teleport to="body">
+        <div v-if="showInstructionsModal" class="modal-overlay" @click="showInstructionsModal = false">
+          <div class="modal-container instructions-modal" @click.stop>
+            <div class="modal-header">
+              <h3>设置对话指令</h3>
+              <button class="close-btn" @click="showInstructionsModal = false">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"/>
+                </svg>
+              </button>
+            </div>
+            <div class="modal-body">
+              <div class="instructions-input-wrapper">
+                <label>自定义指令（可选）</label>
+                <textarea
+                  v-model="currentInstructions"
+                  placeholder="例如：你是我的初中数学 AI 学习教练，基于人教版五四学制数学八年级上册，结合福建中考考情，帮助我高效预习、练习与反思..."
+                  rows="10"
+                ></textarea>
+                <p class="hint">设置后，AI 将在本对话中按照你的指令行为</p>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="modal-btn" @click="clearInstructions">清除指令</button>
+              <button class="modal-btn primary" @click="saveInstructions">保存</button>
+            </div>
+          </div>
+        </div>
+      </Teleport>
+
       <!-- 用户信息弹窗 -->
       <UserProfile v-if="showUserProfile" @close="showUserProfile = false" />
     </div>
@@ -311,12 +386,23 @@
 </template>
 
 <script setup lang="ts">
+// 🔥🔥🔥 版本标记 - 2025-10-13 16:38 - 文档自动选中修复版本 🔥🔥🔥
+console.log('%c🔥 Chat.vue 已加载 - 版本: 2025-10-13-16:38 🔥', 'color: #ff6b6b; font-size: 16px; font-weight: bold;')
+console.log('%c文档自动选中功能已修复', 'color: #4ecdc4; font-size: 14px;')
+
 import { ref, computed, onMounted, nextTick } from 'vue'
 import AppLayout from '../components/AppLayout.vue'
 import UserProfile from '../components/UserProfile.vue'
 import ProfileModal from '../components/ProfileModal.vue'
 import KnowledgeSelector from '../components/KnowledgeSelector.vue'
 import api from '../api'
+import { marked } from 'marked'
+import { markedHighlight } from 'marked-highlight'
+import hljs from 'highlight.js'
+import 'highlight.js/styles/github-dark.css'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
+import { renderMarkdownToHtml, containsMathFormula } from '../utils/markdown'
 
 // 状态
 const conversations = ref([])
@@ -325,6 +411,7 @@ const currentMessages = ref([])
 const inputMessage = ref('')
 const uploadedImage = ref(null)
 const uploadedDoc = ref(null)
+const imageInput = ref(null)
 const showUserProfile = ref(false)
 const showProfileModal = ref(false)
 const messagesContainer = ref(null)
@@ -342,6 +429,12 @@ const selectedDocumentId = ref(null)
 const categoryDocuments = ref([])
 const pendingFile = ref(null)
 const selectedDocuments = ref([]) // 知识库选择器选中的文档列表
+const knowledgeSelector = ref(null) // KnowledgeSelector 组件引用
+const imageModalUrl = ref(null) // 图片预览模态框的图片URL
+
+// 自定义指令相关
+const showInstructionsModal = ref(false)
+const currentInstructions = ref('')
 
 // 用户信息
 const userInfo = computed(() => {
@@ -379,7 +472,7 @@ const contextMenu = ref({
 // 方法
 const createNewChat = async () => {
   try {
-    const response = await api.post('/conversations')
+    const response = await api.post('/api/conversations')
     conversations.value.unshift(response.data)
     currentConversationId.value = response.data.id
     currentMessages.value = []
@@ -391,7 +484,7 @@ const createNewChat = async () => {
 const selectConversation = async (id: string) => {
   currentConversationId.value = id
   try {
-    const response = await api.get(`/conversations/${id}/messages`)
+    const response = await api.get(`/api/conversations/${id}/messages`)
     // 处理历史消息，提取文档信息并清理显示内容
     currentMessages.value = response.data.map(msg => {
       if (msg.role === 'user' && msg.content.includes('[文档:')) {
@@ -409,11 +502,50 @@ const selectConversation = async (id: string) => {
               name: fileName,
               size: '已上传',
               type: fileName.split('.').pop() || 'unknown'
-            }
+            },
+            isStreaming: false
           }
         }
+      } else if (msg.role === 'assistant') {
+        // 对AI消息进行清理，移除旧的占位符
+        let cleanContent = msg.content
+        
+        // 检查是否包含占位符
+        const hasPlaceholders = /MATH_PLACEHOLDER_\d+|MATHBLOCK\d+|MATHINLINE\d+/.test(cleanContent)
+        
+        if (hasPlaceholders) {
+          console.log('发现历史消息包含占位符，进行清理:', msg.id)
+          
+          // 清理所有类型的占位符
+          cleanContent = cleanContent.replace(/MATH_PLACEHOLDER_\d+/g, '[数学公式]')
+          cleanContent = cleanContent.replace(/MATHBLOCK\d+/g, '[数学公式]')
+          cleanContent = cleanContent.replace(/MATHINLINE\d+/g, '[数学公式]')
+          
+          // 清理可能的HTML标签残留
+          cleanContent = cleanContent.replace(/<div class="math-block">\s*<\/div>/g, '[数学公式]')
+          cleanContent = cleanContent.replace(/<span class="math-inline">\s*<\/span>/g, '[数学公式]')
+        }
+        
+        // 如果内容仍然包含数学公式，重新处理
+        if (cleanContent.includes('$')) {
+          console.log('重新处理历史AI消息中的数学公式')
+          try {
+            cleanContent = formatMessage(cleanContent)
+          } catch (error) {
+            console.error('重新处理历史消息失败:', error)
+          }
+        }
+        
+        return {
+          ...msg,
+          content: cleanContent,
+          isStreaming: false // 确保历史消息不是流式状态
+        }
       }
-      return msg
+      return {
+        ...msg,
+        isStreaming: false // 确保所有历史消息都不是流式状态
+      }
     })
     scrollToBottom()
   } catch (error) {
@@ -431,8 +563,21 @@ const sendMessage = async () => {
     return
   }
 
-  let userInput = inputMessage.value
+  // 检查选中的文档是否有正在解析中的
+  const pendingDocs = selectedDocuments.value.filter(doc => doc.status === 'pending')
+  if (pendingDocs.length > 0) {
+    const docNames = pendingDocs.map(d => d.filename).join('、')
+    const confirmSend = confirm(`⚠️ 以下文档正在后台解析中：\n\n${docNames}\n\n文档解析通常需要10-30秒。\n\n选项：\n- 点击"确定"：现在发送消息（AI将无法引用这些文档）\n- 点击"取消"：等待文档解析完成后再发送\n\n建议：等待文档解析完成后再发送，以获得更准确的回答。`)
+
+    if (!confirmSend) {
+      return // 用户选择等待
+    }
+  }
+
+  const sanitizedInput = sanitizeLocalFileReferences(inputMessage.value)
+  let userInput = sanitizedInput
   const imageUrl = uploadedImage.value?.url
+  const imagePreview = uploadedImage.value?.preview // 保存本地预览URL
   let fileInfo = null
 
   // 如果有上传的文档，显示文件信息，但不读取内容（改为使用知识库检索）
@@ -445,11 +590,12 @@ const sendMessage = async () => {
   }
 
   // 添加用户消息 - 显示原始输入文字和文件图标，不显示文件内容
+  const userContent = sanitizedInput || (fileInfo ? `已上传文件: ${fileInfo.name}` : '')
   currentMessages.value.push({
     id: Date.now(),
     role: 'user',
-    content: inputMessage.value || (fileInfo ? `已上传文件: ${fileInfo.name}` : ''),
-    imageUrl,
+    content: userContent, // 用户消息不需要格式化处理
+    imageUrl: imagePreview || imageUrl, // 优先使用本地预览，这样图片能立即显示
     fileInfo,
     createdAt: new Date()
   })
@@ -481,7 +627,7 @@ const sendMessage = async () => {
     }
     console.log('📤 发送请求到后端:', requestBody)
 
-    const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3000'}/conversations/${currentConversationId.value}/messages/stream`, {
+    const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/conversations/${currentConversationId.value}/messages/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -518,9 +664,10 @@ const sendMessage = async () => {
                   // 忽略用户消息确认（已经在前端添加了）
                   console.log('收到用户消息确认')
                 } else if (data.type === 'stream') {
-                  // 流式更新内容
+                  // 流式更新内容，清理HTML标签
                   console.log('收到流式内容:', data.content)
-                  assistantMessage.content += data.content
+                  const cleanedContent = cleanHtmlTags(data.content)
+                  assistantMessage.content += cleanedContent
                   // 强制触发Vue响应式更新
                   const msgIndex = currentMessages.value.findIndex(m => m.id === assistantMessage.id)
                   if (msgIndex !== -1) {
@@ -539,14 +686,22 @@ const sendMessage = async () => {
                   // 更新消息状态
                   const msgIndex = currentMessages.value.findIndex(m => m.id === assistantMessage.id)
                   if (msgIndex !== -1) {
+                    // 流式传输完成，设置为非流式状态，模板会自动调用formatMessage处理数学公式
+                    console.log('流式传输完成，强制更新消息状态')
                     currentMessages.value[msgIndex].isStreaming = false
+                    
+                    // 强制触发Vue响应式更新，确保数学公式正确渲染
+                    nextTick(() => {
+                      console.log('强制触发Vue响应式更新完成')
+                      scrollToBottom()
+                    })
                   }
 
                   // 如果是新对话，更新对话列表
                   const currentConv = conversations.value.find(c => c.id === currentConversationId.value)
                   if (currentConv && currentConv.title === '新对话') {
                     setTimeout(async () => {
-                      const convResponse = await api.get('/conversations')
+                      const convResponse = await api.get('/api/conversations')
                       conversations.value = convResponse.data
                     }, 1000)
                   }
@@ -585,50 +740,85 @@ const handleKnowledgeChange = (documents: any[]) => {
   console.log('📚 文档列表:', documents.map(d => ({ id: d.id, name: d.filename })))
 }
 
-const handleImageUpload = async (e: Event) => {
-  const file = e.target.files[0]
-  if (!file) return
-
-  // 限制图片大小（5MB）
-  if (file.size > 5 * 1024 * 1024) {
-    alert('图片大小不能超过5MB')
-    return
-  }
-
-  // 显示预览
-  const reader = new FileReader()
-  reader.onload = (e) => {
-    uploadedImage.value = {
-      preview: e.target.result,
-      url: '', // 等待上传后获取
-      file: file,
-      uploading: true
-    }
-  }
-  reader.readAsDataURL(file)
-
-  // 上传到服务器
-  try {
-    const formData = new FormData()
-    formData.append('image', file)
-
-    const response = await api.post('/upload/image', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      }
-    })
-
-    // 上传成功，更新URL
-    uploadedImage.value.url = response.data.url
-    uploadedImage.value.uploading = false
-
-    console.log('图片上传成功:', response.data.url)
-  } catch (error) {
-    console.error('图片上传失败:', error)
-    alert('图片上传失败，请重试')
-    uploadedImage.value = null
-  }
+// 图片预览模态框
+const openImageModal = (url: string) => {
+  imageModalUrl.value = url
 }
+
+const closeImageModal = () => {
+  imageModalUrl.value = null
+}
+
+// 图片加载失败处理
+const handleImageError = (event: Event) => {
+  const img = event.target as HTMLImageElement
+  console.error('图片加载失败:', img.src)
+  // 可以设置一个默认图片或显示错误提示
+}
+const sanitizeLocalFileReferences = (text: string) => {
+  if (!text) return ""
+
+  const patterns = [
+    /file:\/\/[^\n"'<>]+/gi,
+    /\/var\/folders\/[^\n"'<>]+/gi,
+    /\/private\/var\/folders\/[^\n"'<>]+/gi,
+    /\/Users\/[^\n"'<>]+/gi
+  ]
+
+  let sanitized = text
+  patterns.forEach(pattern => {
+    sanitized = sanitized.replace(pattern, "[本地文件路径已隐藏]")
+  })
+
+  return sanitized
+}
+
+// 清理AI输出中的HTML标签，但保留数学公式
+const cleanHtmlTags = (content: string) => {
+  if (!content) return ''
+  
+  // 先保护数学公式
+  const mathProtection = new Map()
+  let protectionIndex = 0
+  
+  // 保护块级数学公式 $$...$$
+  content = content.replace(/\$\$([\s\S]*?)\$\$/g, (match) => {
+    const placeholder = `MATH_PROTECT_BLOCK_${protectionIndex++}`
+    mathProtection.set(placeholder, match)
+    return placeholder
+  })
+  
+  // 保护行内数学公式 $...$
+  content = content.replace(/\$([^$\n\r]+?)\$/g, (match) => {
+    const placeholder = `MATH_PROTECT_INLINE_${protectionIndex++}`
+    mathProtection.set(placeholder, match)
+    return placeholder
+  })
+  
+  // 清理HTML标签 - 使用更全面的方法
+  // 先清理所有HTML标签，但保留内容
+  content = content.replace(/<\/?[^>]+(>|$)/g, '')
+  
+  // 清理HTML实体
+  content = content.replace(/&nbsp;/g, ' ')
+  content = content.replace(/&lt;/g, '<')
+  content = content.replace(/&gt;/g, '>')
+  content = content.replace(/&amp;/g, '&')
+  content = content.replace(/&quot;/g, '"')
+  content = content.replace(/&#39;/g, "'")
+  
+  // 清理多余的空行
+  content = content.replace(/\n\s*\n\s*\n/g, '\n\n')
+  
+  // 恢复数学公式
+  mathProtection.forEach((originalMath, placeholder) => {
+    content = content.replace(placeholder, originalMath)
+  })
+  
+  return content
+}
+
+
 
 // 文档上传相关方法
 const toggleDocMenu = () => {
@@ -658,7 +848,7 @@ const uploadNewDocument = () => {
 
     // 加载知识库分类
     try {
-      const response = await api.get('/kb/categories')
+      const response = await api.get('/api/kb/categories')
       categories.value = response.data
       showKnowledgeBaseModal.value = true
     } catch (error) {
@@ -675,7 +865,7 @@ const selectFromKnowledgeBase = async () => {
 
   try {
     // 加载分类列表
-    const response = await api.get('/kb/categories')
+    const response = await api.get('/api/kb/categories')
     categories.value = response.data
     showDocumentSelectModal.value = true
   } catch (error) {
@@ -692,7 +882,7 @@ const loadCategoryDocuments = async () => {
   }
 
   try {
-    const response = await api.get(`/kb/categories/${selectedViewCategoryId.value}/documents`)
+    const response = await api.get(`/api/kb/categories/${selectedViewCategoryId.value}/documents`)
     categoryDocuments.value = response.data
   } catch (error) {
     console.error('加载文档失败', error)
@@ -784,7 +974,7 @@ const uploadToKnowledgeBase = async () => {
     const formData = new FormData()
     formData.append('document', pendingFile.value)
 
-    const uploadResponse = await api.post('/upload/document', formData, {
+    const uploadResponse = await api.post('/api/upload/document', formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
       },
@@ -804,51 +994,40 @@ const uploadToKnowledgeBase = async () => {
     }
 
     console.log('准备创建文档记录:', docData)
-    const docResponse = await api.post('/kb/documents', docData)
+    const docResponse = await api.post('/api/kb/documents', docData)
     console.log('文档记录创建成功:', docResponse.data)
 
-    // 步骤3: 读取文件内容并应用到对话
-    console.log('步骤3: 读取文件内容并应用到对话...')
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const content = e.target.result as string
-      console.log('文件内容读取成功，长度:', content.length)
+    // 保存分类名称用于提示
+    const categoryName = categories.value.find(c => c.id === selectedCategoryId.value)?.name || '未知'
 
-      // 格式化文件大小显示
-      const formatFileSize = (bytes) => {
-        if (bytes < 1024 * 1024) {
-          return (bytes / 1024).toFixed(2) + ' KB'
-        } else {
-          return (bytes / (1024 * 1024)).toFixed(2) + ' MB'
-        }
-      }
-
-      // 安全地获取文件类型
-      let fileType = 'unknown'
-      if (pendingFile.value.type) {
-        fileType = pendingFile.value.type.split('/').pop() || 'unknown'
-      } else if (pendingFile.value.name) {
-        const ext = pendingFile.value.name.split('.').pop()
-        fileType = ext || 'unknown'
-      }
-
-      // 设置为当前文档
-      uploadedDoc.value = {
-        name: uploadResponse.data.name,
-        type: fileType,
-        size: formatFileSize(pendingFile.value.size),
-        file: pendingFile.value,
-        content: content
-      }
-      console.log('文档已设置为当前文档')
+    // 将新上传的文档添加到选择列表
+    // 使用后端返回的 docResponse.data，它已经包含了完整的文档信息
+    const newDocument = {
+      id: docResponse.data.id,
+      filename: docResponse.data.filename,
+      fileSize: docResponse.data.fileSize || docResponse.data.size,
+      status: docResponse.data.status || 'pending',
+      categoryId: docResponse.data.categoryId
     }
 
-    reader.onerror = (error) => {
-      console.error('读取文件内容失败:', error)
-      alert('读取文件内容失败')
-    }
+    // 通过 KnowledgeSelector 组件的方法添加到已选择文档列表
+    console.log('准备调用 KnowledgeSelector.addDocument, knowledgeSelector.value:', knowledgeSelector.value)
+    console.log('新文档数据:', newDocument)
 
-    reader.readAsText(pendingFile.value)
+    if (knowledgeSelector.value) {
+      try {
+        await knowledgeSelector.value.addDocument(newDocument)
+        console.log('已通过组件方法将文档添加到选择列表')
+      } catch (error) {
+        console.error('调用 addDocument 失败:', error)
+        // 即使失败也继续执行，不中断用户流程
+      }
+    } else {
+      console.warn('KnowledgeSelector 组件引用不可用，DOM 可能还未渲染')
+      // 作为备选方案，直接添加到 selectedDocuments
+      selectedDocuments.value.push(newDocument)
+      console.log('已直接添加到 selectedDocuments')
+    }
 
     // 清理状态
     showKnowledgeBaseModal.value = false
@@ -856,7 +1035,17 @@ const uploadToKnowledgeBase = async () => {
     pendingFile.value = null
 
     console.log('知识库上传流程完成')
-    alert('文档已上传到知识库并应用到当前对话！')
+
+    // 显示成功提示
+    alert(`✅ 文档已成功上传并选中！
+
+📄 文档名称：${uploadResponse.data.name}
+📁 所属分类：${categoryName}
+
+⏳ 文档正在后台解析中（约需10-30秒）...
+
+💡 您现在可以直接开始对话！
+文档解析完成后，AI 将能够引用文档内容进行回答。`)
   } catch (error) {
     console.error('上传到知识库失败详细信息:', {
       error: error,
@@ -887,6 +1076,80 @@ const formatFileSize = (bytes: number) => {
 // 格式化日期
 const formatDate = (date: string) => {
   return new Date(date).toLocaleDateString('zh-CN')
+}
+
+const handleImageButtonClick = () => {
+  console.log('图片上传按钮被点击')
+  console.log('imageInput ref:', imageInput.value)
+  
+  if (imageInput.value) {
+    console.log('触发文件选择器')
+    imageInput.value.click()
+  } else {
+    console.error('imageInput ref 未找到')
+  }
+}
+
+const handleImageUpload = async (e: Event) => {
+  console.log('文件选择器触发，事件:', e)
+  const file = e.target.files[0]
+  console.log('选择的文件:', file)
+  if (!file) return
+
+  // 检查文件类型
+  if (!file.type.startsWith('image/')) {
+    alert('请选择图片文件')
+    return
+  }
+
+  // 限制文件大小（5MB）
+  if (file.size > 5 * 1024 * 1024) {
+    alert('图片大小不能超过5MB')
+    return
+  }
+
+  try {
+    // 创建本地预览URL
+    const preview = URL.createObjectURL(file)
+
+    // 先设置预览，标记为上传中
+    uploadedImage.value = {
+      preview,
+      uploading: true
+    }
+
+    // 创建FormData
+    const formData = new FormData()
+    formData.append('image', file)
+
+    // 上传图片
+    const response = await api.post('/api/upload/image', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    })
+
+    // 更新上传的图片信息
+    uploadedImage.value = {
+      url: response.data.url,
+      preview,
+      name: response.data.name,
+      size: formatFileSize(response.data.size),
+      type: response.data.type,
+      uploading: false
+    }
+
+    console.log('图片上传成功:', uploadedImage.value)
+  } catch (error) {
+    console.error('图片上传失败:', error)
+    let errorMessage = '图片上传失败'
+    if (error.response?.data?.message) {
+      errorMessage += ': ' + error.response.data.message
+    } else if (error.message) {
+      errorMessage += ': ' + error.message
+    }
+    alert(errorMessage)
+  }
 }
 
 const handleDocUpload = async (e: Event) => {
@@ -954,7 +1217,7 @@ const renameConversation = async () => {
   if (!newTitle || newTitle === contextMenu.value.conversation.title) return
 
   try {
-    await api.put(`/conversations/${contextMenu.value.conversation.id}`, {
+    await api.put(`/api/conversations/${contextMenu.value.conversation.id}`, {
       title: newTitle
     })
 
@@ -972,7 +1235,7 @@ const deleteConversation = async () => {
   if (!confirm('确定删除这个对话吗？')) return
 
   try {
-    await api.delete(`/conversations/${contextMenu.value.conversation.id}`)
+    await api.delete(`/api/conversations/${contextMenu.value.conversation.id}`)
     conversations.value = conversations.value.filter(c => c.id !== contextMenu.value.conversation.id)
 
     if (currentConversationId.value === contextMenu.value.conversation.id) {
@@ -988,6 +1251,92 @@ const deleteConversation = async () => {
   }
 }
 
+// 自定义指令相关函数
+const openInstructionsModal = () => {
+  const currentConv = conversations.value.find(c => c.id === currentConversationId.value)
+  currentInstructions.value = currentConv?.customInstructions || ''
+  showInstructionsModal.value = true
+}
+
+const saveInstructions = async () => {
+  // 如果当前没有选中对话，自动选择第一个对话
+  if (!currentConversationId.value) {
+    console.log('当前没有选中对话，尝试自动选择...')
+    console.log('对话列表长度:', conversations.value?.length || 0)
+    console.log('对话列表内容:', conversations.value)
+
+    if (conversations.value && conversations.value.length > 0 && conversations.value[0]?.id) {
+      // 自动选择第一个对话
+      currentConversationId.value = conversations.value[0].id
+      console.log('已自动选择第一个对话:', currentConversationId.value)
+    } else {
+      // 如果没有任何对话，创建一个新对话
+      console.log('没有有效对话，创建新对话...')
+      try {
+        await createNewChat()
+        console.log('新对话已创建:', currentConversationId.value)
+
+        // 等待一下确保对话创建完成
+        if (!currentConversationId.value) {
+          throw new Error('对话创建后ID仍然为空')
+        }
+      } catch (error) {
+        console.error('创建新对话失败:', error)
+        alert('保存失败：无法创建对话，请刷新页面后重试')
+        return
+      }
+    }
+  }
+
+  // 再次确认对话ID存在
+  if (!currentConversationId.value) {
+    console.error('无法获取有效的对话ID')
+    alert('保存失败：无法获取对话ID，请刷新页面后重试')
+    return
+  }
+
+  try {
+    console.log('开始保存自定义指令...')
+    console.log('对话ID:', currentConversationId.value)
+    console.log('指令内容:', currentInstructions.value)
+
+    const response = await api.put(`/api/conversations/${currentConversationId.value}`, {
+      customInstructions: currentInstructions.value || null
+    })
+
+    console.log('保存成功，服务器返回:', response.data)
+
+    // 更新本地对话列表
+    const conv = conversations.value.find(c => c.id === currentConversationId.value)
+    if (conv) {
+      conv.customInstructions = currentInstructions.value || null
+      console.log('已更新本地对话列表')
+    }
+
+    showInstructionsModal.value = false
+
+    // 如果保存的是当前对话的指令，显示提示
+    if (currentInstructions.value) {
+      alert('✅ 自定义指令已保存\n\n该指令将作为系统提示词，在本对话的每次交互中自动生效。')
+    } else {
+      alert('✅ 自定义指令已清除')
+    }
+  } catch (error: any) {
+    console.error('保存指令失败:', error)
+    console.error('错误详情:', {
+      message: error.message,
+      response: error.response?.data,
+      status: error.response?.status
+    })
+    alert(`保存失败：${error.response?.data?.message || error.message || '请重试'}`)
+  }
+}
+
+const clearInstructions = async () => {
+  currentInstructions.value = ''
+  await saveInstructions()
+}
+
 const formatTime = (time: string) => {
   const date = new Date(time)
   const now = new Date()
@@ -1000,11 +1349,60 @@ const formatTime = (time: string) => {
   }
 }
 
+// 配置 marked
+marked.use({
+  breaks: true,
+  gfm: true,
+  sanitize: false,  // 不要清理HTML
+  smartypants: false,  // 不要转换引号等
+  silent: false,  // 显示错误
+  async: false,  // 同步处理
+  pedantic: false,  // 不要严格模式
+  headerIds: false,  // 不要生成header ID
+  mangle: false  // 不要混淆邮箱地址
+})
+
+marked.use(
+  markedHighlight({
+    langPrefix: 'hljs language-',
+    highlight(code, lang) {
+      const language = hljs.getLanguage(lang) ? lang : 'plaintext'
+      return hljs.highlight(code, { language }).value
+    }
+  })
+)
+
+
+
+
+
+
+
 const formatMessage = (content: string) => {
-  return content
-    .replace(/\n/g, '<br>')
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+  if (!content) return ''
+
+  try {
+    console.log('=== formatMessage 开始处理 ===')
+    console.log('原始内容:', content.substring(0, 200) + '...')
+    
+    // 清理本地文件引用
+    content = sanitizeLocalFileReferences(content)
+    console.log('清理文件引用后:', content.substring(0, 200) + '...')
+    
+    // 清理AI输出中的HTML标签，但保留数学公式
+    content = cleanHtmlTags(content)
+    console.log('清理HTML标签后:', content.substring(0, 200) + '...')
+
+    // 使用新的markdown渲染工具
+    const result = renderMarkdownToHtml(content)
+    console.log('markdown渲染结果:', result.substring(0, 200) + '...')
+    console.log('=== formatMessage 处理完成 ===')
+    
+    return result
+  } catch (error) {
+    console.error('渲染消息失败:', error)
+    return content.replace(/\n/g, '<br>')
+  }
 }
 
 const scrollToBottom = () => {
@@ -1038,12 +1436,12 @@ onMounted(async () => {
 
   try {
     // 加载对话列表
-    const response = await api.get('/conversations')
+    const response = await api.get('/api/conversations')
     conversations.value = response.data
 
     // 加载知识库分类
     try {
-      const catResponse = await api.get('/kb/categories')
+      const catResponse = await api.get('/api/kb/categories')
       categories.value = catResponse.data
       console.log('知识库分类加载成功:', categories.value.length)
     } catch (error) {
@@ -1347,11 +1745,102 @@ document.addEventListener('click', () => {
   font-size: 14px;
 }
 
-.message-image img {
+/* 消息中的图片 */
+.message-image {
+  margin-bottom: 10px;
+}
+
+.message-image .image-wrapper {
+  position: relative;
+  display: inline-block;
+  cursor: pointer;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.message-image .image-wrapper:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(255, 215, 0, 0.2);
+}
+
+.message-image .image-wrapper img {
   max-width: 300px;
   max-height: 300px;
+  display: block;
+  border-radius: 12px;
+}
+
+.message-image .image-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.message-image .image-wrapper:hover .image-overlay {
+  opacity: 1;
+}
+
+/* 图片预览模态框 */
+.image-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  cursor: pointer;
+  animation: fadeIn 0.2s ease;
+}
+
+.image-modal-content {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+  cursor: default;
+}
+
+.image-modal-content img {
+  max-width: 100%;
+  max-height: 90vh;
   border-radius: 8px;
-  margin-bottom: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.modal-close-btn {
+  position: absolute;
+  top: -40px;
+  right: 0;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: white;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 20px;
+  transition: all 0.2s ease;
+}
+
+.modal-close-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: scale(1.1);
 }
 
 /* 输入区域 */
@@ -1759,35 +2248,84 @@ document.addEventListener('click', () => {
   color: rgba(255, 255, 255, 0.5);
 }
 
+/* 输入框预览区域 */
 .upload-preview {
   position: relative;
   margin-bottom: 10px;
   display: inline-block;
 }
 
-.upload-preview img {
+.upload-preview .image-preview-wrapper {
+  position: relative;
   width: 80px;
   height: 80px;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.upload-preview .image-preview-wrapper:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(255, 215, 0, 0.3);
+}
+
+.upload-preview img {
+  width: 100%;
+  height: 100%;
   object-fit: cover;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 215, 0, 0.2);
+  display: block;
+}
+
+.upload-preview .upload-loading {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.upload-preview .spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid rgba(255, 215, 0, 0.2);
+  border-top-color: #ffd700;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .remove-btn {
   position: absolute;
-  top: -5px;
-  right: -5px;
-  width: 20px;
-  height: 20px;
+  top: -8px;
+  right: -8px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
-  background: #ff4444;
+  background: linear-gradient(135deg, #ff4444 0%, #ff6b6b 100%);
   color: white;
-  border: none;
+  border: 2px solid #0a0a0b;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+}
+
+.remove-btn:hover {
+  background: linear-gradient(135deg, #ff6b6b 0%, #ff8888 100%);
+  transform: scale(1.1);
+  box-shadow: 0 3px 6px rgba(255, 68, 68, 0.4);
 }
 
 .input-box {
@@ -2034,5 +2572,662 @@ document.addEventListener('click', () => {
   background: #f5f5f5;
   color: #666;
   font-size: 14px;
+}
+
+/* 自定义指令状态栏 */
+.instructions-bar {
+  padding: 12px 20px;
+  background: rgba(255, 215, 0, 0.05);
+  border-bottom: 1px solid rgba(255, 215, 0, 0.1);
+}
+
+.instructions-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(255, 215, 0, 0.6);
+  font-size: 14px;
+}
+
+.instructions-status.active {
+  color: #ffd700;
+}
+
+.instructions-status svg {
+  flex-shrink: 0;
+}
+
+.instructions-status span {
+  flex: 1;
+}
+
+.instructions-btn {
+  padding: 6px 16px;
+  background: rgba(255, 215, 0, 0.1);
+  color: #ffd700;
+  border: 1px solid rgba(255, 215, 0, 0.2);
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.instructions-btn:hover {
+  background: rgba(255, 215, 0, 0.2);
+  border-color: rgba(255, 215, 0, 0.3);
+}
+
+/* 自定义指令模态框 */
+.instructions-modal {
+  width: 600px;
+  max-width: 90vw;
+}
+
+.instructions-input-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.instructions-input-wrapper label {
+  color: #ffd700;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.instructions-input-wrapper textarea {
+  width: 100%;
+  padding: 12px;
+  background: rgba(255, 215, 0, 0.05);
+  border: 1px solid rgba(255, 215, 0, 0.2);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 200px;
+}
+
+.instructions-input-wrapper textarea::placeholder {
+  color: rgba(255, 215, 0, 0.4);
+}
+
+.instructions-input-wrapper textarea:focus {
+  outline: none;
+  border-color: rgba(255, 215, 0, 0.4);
+  background: rgba(255, 215, 0, 0.08);
+}
+
+.instructions-input-wrapper .hint {
+  color: rgba(255, 215, 0, 0.5);
+  font-size: 12px;
+  margin: 0;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 20px;
+  border-top: 1px solid rgba(255, 215, 0, 0.1);
+}
+
+/* Markdown 渲染样式 - ChatGPT风格增强 */
+.message-text :deep(h1),
+.message-text :deep(h2),
+.message-text :deep(h3),
+.message-text :deep(h4),
+.message-text :deep(h5),
+.message-text :deep(h6) {
+  margin: 20px 0 12px 0;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #ffd700;
+  position: relative;
+}
+
+.message-text :deep(h1) { 
+  font-size: 1.8em; 
+  border-bottom: 2px solid rgba(255, 215, 0, 0.3);
+  padding-bottom: 8px;
+}
+.message-text :deep(h2) { 
+  font-size: 1.5em;
+  border-bottom: 1px solid rgba(255, 215, 0, 0.2);
+  padding-bottom: 6px;
+}
+.message-text :deep(h3) { 
+  font-size: 1.3em;
+  position: relative;
+}
+.message-text :deep(h3):before {
+  content: "▶";
+  color: #ffd700;
+  margin-right: 8px;
+  font-size: 0.8em;
+}
+
+.message-text :deep(p) {
+  margin: 12px 0;
+  line-height: 1.7;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.message-text :deep(strong) {
+  font-weight: 700;
+  color: #ffd700;
+  background: rgba(255, 215, 0, 0.1);
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.message-text :deep(em) {
+  font-style: italic;
+  color: #87ceeb;
+  background: rgba(135, 206, 235, 0.1);
+  padding: 1px 3px;
+  border-radius: 3px;
+}
+
+.message-text :deep(code) {
+  background: rgba(255, 215, 0, 0.15);
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.9em;
+  color: #ffd700;
+  border: 1px solid rgba(255, 215, 0, 0.2);
+  font-weight: 500;
+}
+
+.message-text :deep(pre) {
+  background: #1a1a1a;
+  padding: 20px;
+  border-radius: 12px;
+  overflow-x: auto;
+  margin: 16px 0;
+  border: 1px solid rgba(255, 215, 0, 0.15);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  position: relative;
+}
+
+.message-text :deep(pre):before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ff5f56;
+  box-shadow: 20px 0 #ffbd2e, 40px 0 #27ca3f;
+}
+
+.message-text :deep(pre code) {
+  background: none;
+  padding: 0;
+  color: #d4d4d4;
+  font-size: 0.95em;
+  line-height: 1.6;
+  border: none;
+  margin-top: 20px;
+  display: block;
+}
+
+.message-text :deep(ul),
+.message-text :deep(ol) {
+  margin: 16px 0;
+  padding-left: 0;
+}
+
+.message-text :deep(ul) {
+  list-style: none;
+}
+
+.message-text :deep(ul li) {
+  position: relative;
+  margin: 8px 0;
+  padding-left: 24px;
+  line-height: 1.7;
+}
+
+.message-text :deep(ul li):before {
+  content: "●";
+  color: #ffd700;
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-size: 0.8em;
+  line-height: 1.7;
+}
+
+.message-text :deep(ol) {
+  counter-reset: list-counter;
+  padding-left: 0;
+}
+
+.message-text :deep(ol li) {
+  position: relative;
+  margin: 8px 0;
+  padding-left: 32px;
+  line-height: 1.7;
+  counter-increment: list-counter;
+}
+
+.message-text :deep(ol li):before {
+  content: counter(list-counter) ".";
+  color: #ffd700;
+  font-weight: 600;
+  position: absolute;
+  left: 0;
+  top: 0;
+  background: rgba(255, 215, 0, 0.1);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  min-width: 20px;
+  text-align: center;
+}
+
+.message-text :deep(blockquote) {
+  border-left: 4px solid #ffd700;
+  padding: 16px 20px;
+  margin: 16px 0;
+  background: rgba(255, 215, 0, 0.05);
+  border-radius: 0 8px 8px 0;
+  color: rgba(255, 255, 255, 0.9);
+  font-style: italic;
+  position: relative;
+}
+
+.message-text :deep(blockquote):before {
+  content: "\201C";
+  font-size: 3em;
+  color: rgba(255, 215, 0, 0.3);
+  position: absolute;
+  top: -10px;
+  left: 10px;
+  line-height: 1;
+}
+
+.message-text :deep(table) {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 16px 0;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.message-text :deep(th),
+.message-text :deep(td) {
+  border: 1px solid rgba(255, 215, 0, 0.15);
+  padding: 12px 16px;
+  text-align: left;
+}
+
+.message-text :deep(th) {
+  background: rgba(255, 215, 0, 0.15);
+  font-weight: 600;
+  color: #ffd700;
+  text-transform: uppercase;
+  font-size: 0.9em;
+  letter-spacing: 0.5px;
+}
+
+.message-text :deep(td) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.message-text :deep(tr):hover td {
+  background: rgba(255, 215, 0, 0.05);
+}
+
+.message-text :deep(hr) {
+  border: none;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #ffd700, transparent);
+  margin: 24px 0;
+  border-radius: 1px;
+}
+
+.message-text :deep(a) {
+  color: #87ceeb;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(135, 206, 235, 0.3);
+  transition: all 0.2s ease;
+  padding: 1px 2px;
+}
+
+.message-text :deep(a):hover {
+  color: #ffd700;
+  border-bottom-color: #ffd700;
+  background: rgba(255, 215, 0, 0.1);
+}
+
+/* 数学公式样式增强 */
+.message-text :deep(.katex) {
+  font-size: 1.15em;
+  color: #e6f3ff;
+  font-family: 'KaTeX_Main', 'Times New Roman', serif;
+  line-height: 1.4;
+}
+
+.message-text :deep(.katex-display) {
+  margin: 1em 0;
+  text-align: center;
+}
+
+/* 行内数学公式样式优化 */
+.message-text :deep(.math-inline) {
+  display: inline-block;
+  margin: 0 3px;
+  padding: 3px 6px;
+  background: rgba(135, 206, 235, 0.12);
+  border-radius: 6px;
+  border: 1px solid rgba(135, 206, 235, 0.2);
+  vertical-align: middle;
+  line-height: 1.4;
+  transition: all 0.2s ease;
+}
+
+.message-text :deep(.math-inline:hover) {
+  background: rgba(135, 206, 235, 0.18);
+  border-color: rgba(135, 206, 235, 0.3);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(135, 206, 235, 0.15);
+}
+
+.message-text :deep(.math-inline .katex) {
+  font-size: 1.08em;
+  color: #c7e3ff;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+/* 块级数学公式样式优化 */
+.message-text :deep(.math-block) {
+  text-align: center;
+  margin: 28px auto;
+  padding: 32px 24px;
+  max-width: 90%;
+  background: linear-gradient(145deg, 
+    rgba(135, 206, 235, 0.12), 
+    rgba(135, 206, 235, 0.06),
+    rgba(135, 206, 235, 0.08)
+  );
+  border: 1px solid rgba(135, 206, 235, 0.3);
+  border-radius: 20px;
+  overflow-x: auto;
+  box-shadow: 
+    0 8px 24px rgba(0, 0, 0, 0.2),
+    0 2px 8px rgba(135, 206, 235, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  position: relative;
+  backdrop-filter: blur(8px);
+  transition: all 0.3s ease;
+}
+
+.message-text :deep(.math-block:hover) {
+  transform: translateY(-2px);
+  box-shadow: 
+    0 12px 32px rgba(0, 0, 0, 0.25),
+    0 4px 12px rgba(135, 206, 235, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.message-text :deep(.math-block):before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, 
+    transparent, 
+    rgba(135, 206, 235, 0.4), 
+    rgba(135, 206, 235, 0.6),
+    rgba(135, 206, 235, 0.4),
+    transparent
+  );
+  border-radius: 20px 20px 0 0;
+}
+
+.message-text :deep(.math-block .katex-display) {
+  margin: 0;
+  color: #eef7ff;
+  line-height: 1.6;
+}
+
+.message-text :deep(.math-block .katex) {
+  font-size: 1.3em;
+  color: #eef7ff;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+/* KaTeX特定元素样式优化 */
+.message-text :deep(.katex .mord),
+.message-text :deep(.katex .mop),
+.message-text :deep(.katex .mbin),
+.message-text :deep(.katex .mrel),
+.message-text :deep(.katex .mopen),
+.message-text :deep(.katex .mclose),
+.message-text :deep(.katex .mpunct) {
+  color: inherit;
+  font-weight: 500;
+}
+
+/* 分数样式优化 - 防止遮盖下一行文字 */
+.message-text :deep(.katex .mfrac) {
+  margin: 0 3px;
+  vertical-align: baseline;
+  display: inline-block;
+  position: relative;
+  line-height: 1;
+  max-height: 2.5em;
+  overflow: visible;
+}
+
+.message-text :deep(.katex .frac-line) {
+  border-bottom-width: 0.08em;
+  border-color: currentColor;
+  opacity: 0.9;
+  margin: 0.05em 0;
+  position: relative;
+  z-index: 1;
+}
+
+/* 分子样式 */
+.message-text :deep(.katex .mfrac .vlist-t .vlist-r:first-child) {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 0.1em;
+  font-size: 0.85em;
+  line-height: 1;
+}
+
+/* 分母样式 */
+.message-text :deep(.katex .mfrac .vlist-t .vlist-r:last-child) {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-top: 0.1em;
+  font-size: 0.85em;
+  line-height: 1;
+}
+
+/* 分子分母容器 */
+.message-text :deep(.katex .mfrac > .vlist-t) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.message-text :deep(.katex .mfrac .vlist-r) {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  line-height: 1;
+}
+
+/* 确保分数不会超出行高 */
+.message-text :deep(.katex-display .mfrac) {
+  margin: 0.2em 3px;
+  max-height: 3em;
+}
+
+/* 行内分数特殊处理 */
+.message-text :deep(.katex-html .mfrac) {
+  transform: translateY(-0.1em);
+  max-height: 2em;
+}
+
+/* 根号样式优化 */
+.message-text :deep(.katex .sqrt) {
+  border-color: currentColor;
+  border-width: 0.08em;
+}
+
+.message-text :deep(.katex .sqrt > .root) {
+  margin-left: 0.2em;
+  margin-right: -0.1em;
+}
+
+/* 上下标样式优化 */
+.message-text :deep(.katex .msupsub) {
+  margin: 0 0.1em;
+}
+
+.message-text :deep(.katex .accent-body) {
+  color: inherit;
+  font-weight: 500;
+}
+
+/* 大型运算符样式优化 */
+.message-text :deep(.katex .mop.op-symbol) {
+  font-size: 1.1em;
+  margin: 0 0.15em;
+}
+
+/* 矩阵和数组样式优化 */
+.message-text :deep(.katex .arraycolsep) {
+  width: 0.8em;
+}
+
+.message-text :deep(.katex .mtable) {
+  margin: 0.2em 0;
+}
+
+/* 括号样式优化 */
+.message-text :deep(.katex .delimsizing) {
+  font-weight: 600;
+  opacity: 0.95;
+}
+
+/* 特殊符号增强 */
+.message-text :deep(.katex .mrel),
+.message-text :deep(.katex .mbin) {
+  margin: 0 0.25em;
+  font-weight: 600;
+}
+
+/* 积分、求和等大型符号 */
+.message-text :deep(.katex .mop.op-limits) {
+  margin: 0 0.2em;
+  font-size: 1.15em;
+}
+
+/* 希腊字母和特殊字符 */
+.message-text :deep(.katex .mathit),
+.message-text :deep(.katex .mathrm) {
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+/* 代码高亮主题调整 */
+.message-text :deep(.hljs) {
+  background: #1a1a1a !important;
+  padding: 0 !important;
+}
+
+/* 响应式优化 */
+@media (max-width: 768px) {
+  .message-text :deep(table) {
+    font-size: 0.9em;
+  }
+  
+  .message-text :deep(pre) {
+    padding: 16px;
+    margin: 12px 0;
+  }
+  
+  .message-text :deep(blockquote) {
+    padding: 12px 16px;
+    margin: 12px 0;
+  }
+  
+  .message-text :deep(ol li):before {
+    padding: 1px 6px;
+    font-size: 0.8em;
+  }
+  
+  .message-text :deep(ul li),
+  .message-text :deep(ol li) {
+    padding-left: 20px;
+  }
+  
+  /* 移动端数学公式优化 */
+  .message-text :deep(.math-inline) {
+    margin: 0 2px;
+    padding: 2px 4px;
+    font-size: 0.95em;
+  }
+  
+  .message-text :deep(.math-inline .katex) {
+    font-size: 1.02em;
+  }
+  
+  .message-text :deep(.math-block) {
+    margin: 20px auto;
+    padding: 20px 16px;
+    max-width: 95%;
+    border-radius: 16px;
+  }
+  
+  .message-text :deep(.math-block .katex) {
+    font-size: 1.15em;
+  }
+  
+  /* 移动端特殊符号调整 */
+  .message-text :deep(.katex .mrel),
+  .message-text :deep(.katex .mbin) {
+    margin: 0 0.2em;
+  }
+  
+  .message-text :deep(.katex .mop.op-limits) {
+    font-size: 1.1em;
+  }
+}
+
+/* 超小屏幕优化 */
+@media (max-width: 480px) {
+  .message-text :deep(.math-block) {
+    margin: 16px auto;
+    padding: 16px 12px;
+    max-width: 98%;
+  }
+  
+  .message-text :deep(.math-block .katex) {
+    font-size: 1.1em;
+  }
+  
+  .message-text :deep(.math-inline .katex) {
+    font-size: 1em;
+  }
 }
 </style>
