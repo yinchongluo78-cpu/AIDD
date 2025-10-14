@@ -413,8 +413,10 @@ export async function searchDocumentChunks(
     const keywords = tokenize(query)
     console.log('提取关键词:', keywords)
 
-    if (keywords.length > 0) {
-      // 使用OR条件匹配任意关键词
+    // 如果有关键词，添加内容匹配条件
+    // 但如果用户明确指定了documentIds，即使没有关键词匹配也要返回文档内容
+    if (keywords.length > 0 && !documentIds) {
+      // 普通搜索：必须匹配关键词
       whereClause.OR = keywords.map(keyword => ({
         content: {
           contains: keyword,
@@ -422,6 +424,7 @@ export async function searchDocumentChunks(
         }
       }))
     }
+    // 如果指定了documentIds，不添加关键词限制，返回文档的所有切片
 
     // 获取所有匹配的切片
     const chunks = await prisma.kbChunk.findMany({
@@ -429,7 +432,7 @@ export async function searchDocumentChunks(
       include: {
         document: true
       },
-      take: limit * 3, // 先取更多结果，后面重新排序
+      take: documentIds && documentIds.length > 0 ? limit * 10 : limit * 3, // 指定文档时取更多切片
     })
 
     console.log(`找到 ${chunks.length} 个初步匹配的切片`)
