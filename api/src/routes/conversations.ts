@@ -54,7 +54,26 @@ router.get('/:id/messages', authenticateToken, async (req: AuthRequest, res) => 
       orderBy: { createdAt: 'asc' }
     })
 
-    res.json(messages)
+    // 为带有图片的消息生成预签名 URL
+    const messagesWithSignedUrls = await Promise.all(
+      messages.map(async (msg) => {
+        if (msg.imageOssKey) {
+          try {
+            const signedUrl = await getSignedUrl(msg.imageOssKey, 3600) // 1小时有效期
+            return {
+              ...msg,
+              imageUrl: signedUrl
+            }
+          } catch (error) {
+            console.error('生成图片预签名URL失败:', error)
+            return msg
+          }
+        }
+        return msg
+      })
+    )
+
+    res.json(messagesWithSignedUrls)
   } catch (error) {
     console.error('获取消息错误:', error)
     res.status(500).json({ message: '获取消息失败' })
@@ -80,18 +99,40 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
       'Access-Control-Allow-Origin': '*'
     })
 
-    // 保存用户消息（稍后会在检索后更新引用信息）
+    // 如果传入的是完整的 OSS URL，先提取出 key；否则按原样保存为 key
+    let initialOssKey: string | undefined = undefined
+    if (imageUrl) {
+      initialOssKey = imageUrl.includes('aliyuncs.com/')
+        ? imageUrl.split('aliyuncs.com/')[1]
+        : imageUrl
+    }
+
+    // 保存用户消息（记录 imageOssKey，兼容生产库字段）
     const userMessage = await prisma.message.create({
       data: {
         conversationId,
         role: 'user',
         content,
-        imageOssKey: imageUrl
+        imageOssKey: initialOssKey
       }
     })
 
     // 发送用户消息确认
     res.write(`data: ${JSON.stringify({ type: 'user_message', data: userMessage })}\n\n`)
+
+    // 获取对话信息（包含自定义指令）
+    const currentConversation = await prisma.conversation.findUnique({
+      where: { id: conversationId }
+    })
+
+    console.log('=== 对话信息 ===')
+    console.log('对话ID:', currentConversation?.id)
+    console.log('对话标题:', currentConversation?.title)
+    console.log('自定义指令存在:', !!currentConversation?.customInstructions)
+    console.log('自定义指令长度:', currentConversation?.customInstructions?.length || 0)
+    if (currentConversation?.customInstructions) {
+      console.log('自定义指令内容（前100字）:', currentConversation.customInstructions.substring(0, 100) + '...')
+    }
 
     // 获取历史消息
     const messages = await prisma.message.findMany({
@@ -105,39 +146,54 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
       content: msg.content
     }))
 
-    // 如果有图片，先进行图片识别
-    let fullContent = content
+    // 初始化内容和引用
+    let fullContent = content || ''
     let citations: string[] = []
+    let ocrResult = ''  // 保存OCR结果
+    let kbContext = ''   // 保存知识库上下文
 
+    // 1. 如果有图片，先进行图片识别
     if (imageUrl) {
+      console.log('=== 开始图片识别 ===')
       try {
-        // 从OSS URL中提取key（去掉域名部分）
-        let ossKey = imageUrl
-        if (imageUrl.includes('aliyuncs.com/')) {
-          ossKey = imageUrl.split('aliyuncs.com/')[1]
+        // 如果不是常见位图格式，跳过OCR，给出提示以避免外部服务报错
+        const isRasterImage = /\.(png|jpg|jpeg|webp|gif)$/i.test(imageUrl)
+        if (!isRasterImage) {
+          console.log('非位图格式，跳过OCR:', imageUrl)
+          ocrResult = '当前图片格式不支持OCR，请上传 PNG/JPG/WebP 等常见图片格式。'
+        } else {
+          // 从OSS URL中提取key（去掉域名部分）
+          let ossKey = imageUrl
+          if (imageUrl.includes('aliyuncs.com/')) {
+            ossKey = imageUrl.split('aliyuncs.com/')[1]
+          }
+
+          // 生成带签名的临时URL（1小时有效期）
+          const signedUrl = await getSignedUrl(ossKey, 3600)
+          console.log('生成签名URL用于OCR:', signedUrl.substring(0, 100) + '...')
+
+          // 使用签名URL调用OCR
+          ocrResult = await analyzeHomework(signedUrl)
+          console.log(`✅ OCR识别完成，结果长度: ${ocrResult.length}`)
         }
-
-        // 生成带签名的临时URL（1小时有效期）
-        const signedUrl = await getSignedUrl(ossKey, 3600)
-        console.log('生成签名URL用于OCR:', signedUrl.substring(0, 100) + '...')
-
-        // 使用签名URL调用OCR
-        const imageAnalysis = await analyzeHomework(signedUrl)
-        // 将图片分析结果加入到消息中
-        fullContent = content ?
-          `${content}\n\n[图片分析]: ${imageAnalysis}` :
-          `请根据以下图片分析结果回答问题：\n${imageAnalysis}`
       } catch (error) {
-        console.error('图片识别失败:', error)
-        fullContent = content || '图片识别失败，请重新上传'
+        console.error('❌ 图片识别失败:', error)
+        ocrResult = '图片识别失败，请重新上传'
       }
     }
 
-    // 如果有知识库引用，检索相关内容
-    if ((categoryId || documentIds) && content) {
-      console.log('开始知识库检索...')
+    // 2. 如果有知识库引用，检索相关内容
+    if (categoryId || (documentIds && documentIds.length > 0)) {
+      console.log('=== 开始知识库检索 ===')
+      console.log('categoryId:', categoryId)
+      console.log('documentIds:', documentIds)
+      console.log('content:', content || '(无用户输入文字)')
+
+      // 如果用户没有输入文字，使用默认查询
+      const searchQuery = content || '请总结文档的主要内容'
+
       const relevantChunks = await searchDocumentChunks(
-        content,
+        searchQuery,
         categoryId,
         req.userId,
         5, // 最多返回5个相关片段
@@ -145,10 +201,10 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
       )
 
       if (relevantChunks.length > 0) {
-        console.log(`找到 ${relevantChunks.length} 个相关文档片段`)
+        console.log(`✅ 找到 ${relevantChunks.length} 个相关文档片段`)
 
         // 构建知识库上下文
-        let kbContext = '\n\n===== 知识库参考内容 =====\n'
+        kbContext = '\n\n===== 知识库参考内容 =====\n'
         relevantChunks.forEach((item, index) => {
           kbContext += `\n【文档${index + 1}：${item.document.filename}】\n`
           kbContext += item.chunk.content + '\n'
@@ -157,13 +213,40 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
           citations.push(`${item.document.filename} - 片段${index + 1}`)
         })
         kbContext += '\n===== 知识库内容结束 =====\n'
-
-        // 将知识库内容加入到用户消息中
-        fullContent = `${fullContent}\n${kbContext}\n请基于以上知识库内容回答问题。`
       } else {
-        console.log('未找到相关文档片段')
+        console.log('❌ 未找到相关文档片段')
+        console.log('可能原因：1) 文档未解析 2) 文档没有内容 3) 查询关键词不匹配')
       }
     }
+
+    // 3. 组合所有内容（用户输入 + OCR结果 + 知识库上下文）
+    console.log('=== 组合所有内容 ===')
+    console.log('- 用户输入文字:', content ? `${content.length}字符` : '无')
+    console.log('- OCR结果:', ocrResult ? `${ocrResult.length}字符` : '无')
+    console.log('- 知识库上下文:', kbContext ? `${kbContext.length}字符` : '无')
+
+    // 按照优先级组合内容
+    if (content) {
+      fullContent = content
+    }
+
+    if (ocrResult) {
+      if (fullContent) {
+        fullContent += `\n\n===== 图片识别结果 =====\n${ocrResult}\n===== 图片识别结束 =====`
+      } else {
+        fullContent = `请根据以下图片识别结果回答问题：\n\n${ocrResult}`
+      }
+    }
+
+    if (kbContext) {
+      if (fullContent) {
+        fullContent += `\n${kbContext}\n请基于以上内容（包括图片和知识库）回答问题。`
+      } else {
+        fullContent = `${kbContext}\n请根据以上文档内容，总结主要信息并回答我的问题。`
+      }
+    }
+
+    console.log(`✅ 最终内容组合完成，总长度: ${fullContent.length}字符`)
 
     // 限制发送给DeepSeek API的内容大小，避免413错误
     // DeepSeek API限制请求体约在1MB左右，我们控制在500KB以内
@@ -173,9 +256,19 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
       fullContent = fullContent.substring(0, maxContentLength) + '\n\n[注意：文档内容过长，已截取部分内容进行分析]'
     }
 
+    // 使用自定义指令或默认系统消息
+    const defaultSystemMessage = '你是一个专业的AI学习助手，请用中文回答用户的问题。'
+    const systemMessage = currentConversation?.customInstructions || defaultSystemMessage
+
+    console.log('=== 系统提示词 ===')
+    console.log('使用自定义指令:', !!currentConversation?.customInstructions)
+    console.log('系统消息长度:', systemMessage.length)
+    console.log('系统消息内容（前200字）:', systemMessage.substring(0, 200) + (systemMessage.length > 200 ? '...' : ''))
+    console.log('===================')
+
     // 构建消息数组并检查总大小
     const apiRequestMessages = [
-      { role: 'system', content: '你是一个专业的AI学习助手，请用中文回答用户的问题。' },
+      { role: 'system', content: systemMessage },
       ...apiMessages.slice(-10), // 保留最近10条历史消息（根据用户要求）
       { role: 'user', content: fullContent }
     ]
@@ -238,7 +331,7 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
                 conversationId,
                 role: 'assistant',
                 content: responseContent,
-                citations: citations.length > 0 ? citations : undefined
+                citations: citations.length > 0 ? (JSON.stringify(citations) as any) : null
               }
             }).then(assistantMessage => {
               res.write(`data: ${JSON.stringify({ type: 'done', data: assistantMessage })}\n\n`)
@@ -268,11 +361,11 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
       res.end()
     })
 
-    // 生成标题
+    // 生成标题 - 获取对话信息
     const conversation = await prisma.conversation.findUnique({
       where: { id: conversationId }
     })
-
+    
     if (conversation?.title === '新对话' || conversation?.title === '') {
       // 异步生成标题，不阻塞响应
       generateTitle(conversationId, content)
@@ -280,8 +373,23 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
 
   } catch (error: any) {
     console.error('流式响应错误:', error)
-    res.write(`data: ${JSON.stringify({ type: 'error', message: '服务器错误' })}\n\n`)
-    res.end()
+    // 兜底：返回用户友好的完成消息，避免“服务器错误”直接展示
+    try {
+      const assistantMessage = await prisma.message.create({
+        data: {
+          conversationId: req.params.id,
+          role: 'assistant',
+          content: '抱歉，图片解析或生成回复时出现问题。请换一张更清晰的图片，或直接用文字描述问题，我会继续帮你。'
+        }
+      })
+      res.write(`data: ${JSON.stringify({ type: 'done', data: assistantMessage })}\n\n`)
+      res.end()
+    } catch (e) {
+      // 如果数据库写入也失败，退回到错误事件
+      console.error('兜底消息写入失败:', e)
+      res.write(`data: ${JSON.stringify({ type: 'error', message: '服务暂时不可用，请稍后重试' })}\n\n`)
+      res.end()
+    }
   }
 })
 
@@ -329,12 +437,19 @@ router.post('/:id/messages', authenticateToken, async (req: AuthRequest, res) =>
     const conversationId = req.params.id
 
     // 保存用户消息
+    let initialOssKey: string | undefined = undefined
+    if (imageUrl) {
+      initialOssKey = imageUrl.includes('aliyuncs.com/')
+        ? imageUrl.split('aliyuncs.com/')[1]
+        : imageUrl
+    }
+
     const userMessage = await prisma.message.create({
       data: {
         conversationId,
         role: 'user',
         content,
-        imageOssKey: imageUrl
+        imageOssKey: initialOssKey
       }
     })
 
@@ -501,20 +616,37 @@ router.post('/:id/messages', authenticateToken, async (req: AuthRequest, res) =>
 
 router.put('/:id', authenticateToken, async (req: AuthRequest, res) => {
   try {
-    const { title } = req.body
+    console.log('===== 收到更新对话请求 =====')
+    console.log('对话ID:', req.params.id)
+    console.log('用户ID:', req.userId)
+    console.log('请求体:', req.body)
+
+    const { title, customInstructions } = req.body
+
+    const updateData: any = {}
+    if (title !== undefined) updateData.title = title
+    if (customInstructions !== undefined) updateData.customInstructions = customInstructions || null
+
+    console.log('将要更新的数据:', updateData)
 
     const conversation = await prisma.conversation.update({
       where: {
         id: req.params.id,
         userId: req.userId
       },
-      data: { title }
+      data: updateData
     })
 
+    console.log('更新成功，返回:', conversation)
     res.json(conversation)
-  } catch (error) {
+  } catch (error: any) {
     console.error('更新对话错误:', error)
-    res.status(500).json({ message: '更新对话失败' })
+    console.error('错误详情:', {
+      message: error.message,
+      code: error.code,
+      meta: error.meta
+    })
+    res.status(500).json({ message: '更新对话失败', error: error.message })
   }
 })
 
