@@ -238,7 +238,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import AppLayout from '../components/AppLayout.vue'
 import UserProfile from '../components/UserProfile.vue'
 import api from '../api'
@@ -251,6 +251,7 @@ const showAddCategory = ref(false)
 const newCategoryName = ref('')
 const showUserProfile = ref(false)
 const isAuthenticated = ref(!!localStorage.getItem('token'))
+const statusCheckInterval = ref<number | null>(null)
 
 // 文档预览
 const documentPreview = ref({
@@ -313,7 +314,7 @@ const docMenu = ref({
 // 方法
 const loadCategories = async () => {
   try {
-    const response = await api.get('/kb/categories')
+    const response = await api.get('/api/kb/categories')
     categories.value = response.data
 
     // 自动选择第一个分类
@@ -328,10 +329,64 @@ const loadCategories = async () => {
 const selectCategory = async (categoryId: string) => {
   selectedCategoryId.value = categoryId
   try {
-    const response = await api.get(`/kb/categories/${categoryId}/documents`)
+    const response = await api.get(`/api/kb/categories/${categoryId}/documents`)
     documents.value = response.data
+
+    // 启动状态检查，如果有pending状态的文档
+    checkAndStartStatusPolling()
   } catch (error) {
     console.error('加载文档失败', error)
+  }
+}
+
+// 检查是否有pending状态的文档，如果有则开始轮询
+const checkAndStartStatusPolling = () => {
+  const hasPendingDocs = documents.value.some(doc => doc.status === 'pending')
+
+  if (hasPendingDocs && !statusCheckInterval.value) {
+    // 每5秒检查一次
+    statusCheckInterval.value = window.setInterval(refreshDocumentStatus, 5000)
+    console.log('开始轮询文档状态（有pending文档）')
+  } else if (!hasPendingDocs && statusCheckInterval.value) {
+    // 如果没有pending文档了，停止轮询
+    window.clearInterval(statusCheckInterval.value)
+    statusCheckInterval.value = null
+    console.log('停止轮询文档状态（无pending文档）')
+  }
+}
+
+// 刷新当前分类的文档状态
+const refreshDocumentStatus = async () => {
+  if (!selectedCategoryId.value) return
+
+  try {
+    const response = await api.get(`/api/kb/categories/${selectedCategoryId.value}/documents`)
+    const newDocs = response.data
+
+    // 只更新状态发生变化的文档
+    let hasChanges = false
+    documents.value = documents.value.map(doc => {
+      const newDoc = newDocs.find(d => d.id === doc.id)
+      if (newDoc && newDoc.status !== doc.status) {
+        hasChanges = true
+        console.log(`文档"${doc.filename}"状态更新: ${doc.status} -> ${newDoc.status}`)
+
+        // 如果状态变为ready，显示成功消息
+        if (newDoc.status === 'ready' && doc.status === 'pending') {
+          showMessage('success', `文档"${doc.filename}"解析完成！`)
+        }
+
+        return newDoc
+      }
+      return doc
+    })
+
+    // 检查是否还有pending的文档
+    if (hasChanges) {
+      checkAndStartStatusPolling()
+    }
+  } catch (error) {
+    console.error('刷新文档状态失败', error)
   }
 }
 
@@ -339,7 +394,7 @@ const addCategory = async () => {
   if (!newCategoryName.value.trim()) return
 
   try {
-    const response = await api.post('/kb/categories', {
+    const response = await api.post('/api/kb/categories', {
       name: newCategoryName.value
     })
     categories.value.push(response.data)
@@ -373,7 +428,7 @@ const handleFileUpload = async (e: Event) => {
       const formData = new FormData()
       formData.append('document', file)
 
-      const uploadResponse = await api.post('/upload/document', formData, {
+      const uploadResponse = await api.post('/api/upload/document', formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         },
@@ -401,7 +456,7 @@ const handleFileUpload = async (e: Event) => {
       uploadProgress.value.percent = 80
       uploadProgress.value.filename = `解析文档: ${file.name}`
 
-      const docResponse = await api.post('/kb/documents', docData)
+      const docResponse = await api.post('/api/kb/documents', docData)
 
       uploadProgress.value.percent = 100
 
@@ -413,7 +468,10 @@ const handleFileUpload = async (e: Event) => {
       }, 1000)
 
       // 显示成功消息
-      showMessage('success', `文档"${docResponse.data.name}"上传成功！`)
+      showMessage('success', `文档"${docResponse.data.name}"上传成功！文档正在后台解析...`)
+
+      // 启动状态轮询检查
+      checkAndStartStatusPolling()
     } catch (error) {
       console.error('上传失败:', error)
       uploadProgress.value.show = false
@@ -554,9 +612,11 @@ const formatDate = (date: string) => {
 
 const getStatusText = (status: string) => {
   const texts = {
+    pending: '解析中',
     uploading: '上传中',
     processing: '处理中',
     ready: '就绪',
+    failed: '失败',
     error: '错误'
   }
   return texts[status] || status
@@ -577,6 +637,15 @@ onMounted(() => {
 
   isAuthenticated.value = true
   loadCategories()
+})
+
+// 清理定时器
+onUnmounted(() => {
+  if (statusCheckInterval.value) {
+    window.clearInterval(statusCheckInterval.value)
+    statusCheckInterval.value = null
+    console.log('组件卸载，清理状态轮询定时器')
+  }
 })
 
 // 点击其他地方关闭菜单
@@ -877,12 +946,24 @@ document.addEventListener('click', () => {
   border: 1px solid rgba(76, 175, 80, 0.3);
 }
 
+.doc-status.pending,
 .doc-status.processing {
   background: rgba(255, 215, 0, 0.1);
   color: #ffd700;
   border: 1px solid rgba(255, 215, 0, 0.3);
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.doc-status.failed,
 .doc-status.error {
   background: rgba(244, 67, 54, 0.1);
   color: #f44336;
