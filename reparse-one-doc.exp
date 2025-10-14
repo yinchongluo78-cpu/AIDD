@@ -1,0 +1,23 @@
+#!/usr/bin/expect -f
+set timeout 60
+set password "Lyc001286"
+
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+}
+
+expect "# "
+
+puts "\n重新解析一个pending状态的文档..."
+send "cd /var/www/lyc-ai/api\r"
+expect "# "
+
+send "node -e \"const { PrismaClient } = require('@prisma/client'); const { parseAndStoreDocument } = require('./dist/services/documentParser'); const prisma = new PrismaClient(); (async () => { const doc = await prisma.kbDocument.findFirst({ where: { status: 'pending' } }); if (doc) { console.log('解析文档:', doc.filename, doc.id); try { const chunks = await parseAndStoreDocument(doc.id, doc.ossKey); console.log('成功，生成', chunks, '个切片'); await prisma.kbDocument.update({ where: { id: doc.id }, data: { status: 'ready' } }); } catch (e) { console.error('失败:', e.message); await prisma.kbDocument.update({ where: { id: doc.id }, data: { status: 'failed' } }); } } else { console.log('没有pending状态的文档'); } await prisma.\\\$disconnect(); })()\"\r"
+expect "# "
+sleep 30
+
+send "exit\r"
+expect eof

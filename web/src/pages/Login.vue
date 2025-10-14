@@ -79,7 +79,7 @@ const handleSubmit = async () => {
   }
 
   try {
-    const endpoint = mode.value === 'login' ? '/auth/login' : '/auth/register'
+    const endpoint = mode.value === 'login' ? '/api/auth/login' : '/api/auth/register'
     const response = await api.post(endpoint, {
       email: form.value.email,
       password: form.value.password

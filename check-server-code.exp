@@ -1,0 +1,30 @@
+#!/usr/bin/expect -f
+set timeout 30
+set password "Lyc001286"
+
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+}
+
+expect "# "
+
+puts "\n检查服务器上的 documentParser.js 是否包含新的日志..."
+send "grep -n '文档分割成' /var/www/lyc-ai/api/dist/services/documentParser.js | head -5\r"
+expect "# "
+sleep 2
+
+puts "\n检查是否有 '批量存储切片' 的日志..."
+send "grep -n '批量存储切片' /var/www/lyc-ai/api/dist/services/documentParser.js | head -5\r"
+expect "# "
+sleep 2
+
+puts "\n检查 PM2 进程的重启次数..."
+send "pm2 list | grep lyc-ai-api\r"
+expect "# "
+sleep 2
+
+send "exit\r"
+expect eof

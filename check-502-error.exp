@@ -1,0 +1,34 @@
+#!/usr/bin/expect -f
+set timeout 30
+set password "Lyc001286"
+
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+}
+
+expect "# "
+
+puts "\n1. 检查 PM2 进程状态..."
+send "pm2 list\r"
+expect "# "
+sleep 2
+
+puts "\n2. 检查 Nginx 状态..."
+send "systemctl status nginx | head -20\r"
+expect "# "
+sleep 2
+
+puts "\n3. 检查 API 是否在运行..."
+send "curl -s http://localhost:3003/api/health\r"
+expect "# "
+
+puts "\n4. 检查最近的错误日志..."
+send "pm2 logs lyc-ai-api --err --lines 20 --nostream\r"
+expect "# "
+sleep 3
+
+send "exit\r"
+expect eof

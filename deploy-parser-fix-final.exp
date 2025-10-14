@@ -1,0 +1,52 @@
+#!/usr/bin/expect -f
+set timeout 60
+set password "Lyc001286"
+
+puts "================================"
+puts "部署文档解析服务修复"
+puts "================================"
+
+# 连接服务器
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+}
+
+expect "# "
+
+puts "\n备份文档解析服务..."
+send "cp /var/www/lyc-ai/api/dist/services/documentParser.js /var/www/lyc-ai/api/dist/services/documentParser.js.backup.\$(date +%Y%m%d_%H%M%S)\r"
+expect "# "
+
+send "exit\r"
+expect eof
+
+# 上传编译后的 documentParser
+puts "\n上传修复后的 documentParser.js..."
+spawn scp /Users/luoyinchong/Desktop/lyc2/api/dist/services/documentParser.js root@120.24.22.244:/var/www/lyc-ai/api/dist/services/
+expect {
+    "password:" {
+        send "$password\r"
+    }
+}
+expect eof
+
+# 重新连接并重启
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+}
+expect "# "
+
+puts "\n重启 PM2 服务..."
+send "pm2 restart lyc-ai-api\r"
+expect "# "
+sleep 2
+
+puts "\n部署完成！"
+send "exit\r"
+expect eof

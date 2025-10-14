@@ -11,12 +11,14 @@ model User {
   id           String      @id @default(uuid()) @db.Uuid
   email        String      @unique
   passwordHash String      @map("password_hash")
+  role         String      @default("user")
   createdAt    DateTime    @default(now()) @map("created_at")
 
   profile       Profile?
   categories    KbCategory[]
   documents     KbDocument[]
   conversations Conversation[]
+  sessions      UserSession[]
 
   @@map("users")
 }
@@ -81,10 +83,11 @@ model KbChunk {
 }
 
 model Conversation {
-  id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @db.Uuid @map("user_id")
-  title     String?
-  createdAt DateTime @default(now()) @map("created_at")
+  id                 String   @id @default(uuid()) @db.Uuid
+  userId             String   @db.Uuid @map("user_id")
+  title              String?
+  customInstructions String?  @map("custom_instructions") @db.Text
+  createdAt          DateTime @default(now()) @map("created_at")
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages Message[]
@@ -107,4 +110,17 @@ model Message {
 
   @@map("messages")
   @@index([conversationId, createdAt])
+}
+
+model UserSession {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid @map("user_id")
+  startTime DateTime @default(now()) @map("start_time")
+  endTime   DateTime? @map("end_time")
+  duration  Int      @default(0) // 活跃时长（秒）
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_sessions")
+  @@index([userId, startTime])
 }

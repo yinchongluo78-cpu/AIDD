@@ -1,0 +1,69 @@
+#!/usr/bin/expect -f
+set timeout 60
+set password "Lyc001286"
+
+puts "================================"
+puts "知识库错误修复 - 简化部署（直接上传编译文件）"
+puts "================================"
+
+# 先在本地编译
+puts "\n本地编译..."
+spawn bash -c "cd /Users/luoyinchong/Desktop/lyc2/api && pnpm build"
+expect eof
+
+# 连接服务器
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+}
+
+expect "# "
+
+puts "\n备份服务器上的 kb.js 文件..."
+send "cp /var/www/lyc-ai/api/dist/routes/kb.js /var/www/lyc-ai/api/dist/routes/kb.js.backup.\$(date +%Y%m%d_%H%M%S)\r"
+expect "# "
+
+send "exit\r"
+expect eof
+
+# 上传编译后的文件
+puts "\n上传编译后的 kb.js..."
+spawn scp /Users/luoyinchong/Desktop/lyc2/api/dist/routes/kb.js root@120.24.22.244:/var/www/lyc-ai/api/dist/routes/
+expect {
+    "password:" {
+        send "$password\r"
+    }
+}
+expect eof
+
+# 重新连接服务器并重启
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+}
+expect "# "
+
+puts "\n重启 PM2 服务..."
+send "pm2 restart lyc-ai-api\r"
+expect "# "
+sleep 2
+
+puts "\n查看重启后的日志..."
+send "pm2 logs lyc-ai-api --lines 30 --nostream\r"
+expect "# "
+sleep 3
+
+puts "\n================================"
+puts "部署完成！现在测试知识库功能..."
+puts "================================"
+
+send "exit\r"
+expect eof

@@ -1,0 +1,31 @@
+#!/usr/bin/expect -f
+set timeout 30
+set password "Lyc001286"
+
+puts "================================"
+puts "测试知识库 API"
+puts "================================"
+
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+}
+
+expect "# "
+
+puts "\n查看最新的 API 日志（过滤知识库相关）..."
+send "pm2 logs lyc-ai-api --lines 50 --nostream | grep -i \"知识库\\|分类\\|category\\|document\" | tail -20\r"
+expect "# "
+sleep 2
+
+puts "\n测试健康检查..."
+send "curl -s http://localhost:3003/api/health\r"
+expect "# "
+
+puts "\n完成！请在浏览器中刷新页面测试知识库功能"
+puts "================================"
+
+send "exit\r"
+expect eof

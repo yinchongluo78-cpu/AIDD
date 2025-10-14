@@ -1,0 +1,46 @@
+#!/usr/bin/expect -f
+set timeout 300
+set password "Lyc001286"
+
+# 1. 打包文件
+spawn bash -c "cd /Users/luoyinchong/Desktop/lyc2 && tar -czf custom-instructions-update.tar.gz api/prisma/schema.prisma api/src/routes/conversations.ts api/dist/ web/dist/"
+expect eof
+
+# 2. 上传到服务器
+spawn scp /Users/luoyinchong/Desktop/lyc2/custom-instructions-update.tar.gz root@120.24.22.244:/tmp/
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    eof
+}
+
+# 3. SSH 到服务器执行部署
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+}
+
+expect "# "
+send "cd /var/www/lyc-ai\r"
+
+expect "# "
+send "tar -xzf /tmp/custom-instructions-update.tar.gz\r"
+
+expect "# "
+send "cd api && npx prisma db push --skip-generate\r"
+
+expect "# "
+send "pm2 restart lyc-ai-api\r"
+
+expect "# "
+send "pm2 restart lyc-ai-web\r"
+
+expect "# "
+send "exit\r"
+expect eof
+
+puts "\n=== 部署完成 ==="

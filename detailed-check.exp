@@ -1,0 +1,46 @@
+#!/usr/bin/expect -f
+set timeout 15
+set password "Lyc001286"
+
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+}
+
+expect "# "
+send "echo '=== PM2 Status ==='\r"
+expect "# "
+send "pm2 status\r"
+expect "# "
+send "echo '=== PM2 Logs ==='\r"
+expect "# "
+send "pm2 logs lyc-ai-api --lines 10\r"
+expect "# "
+send "echo '=== Nginx Status ==='\r"
+expect "# "
+send "systemctl status nginx\r"
+expect "# "
+send "echo '=== Current Nginx Config ==='\r"
+expect "# "
+send "cat /etc/nginx/sites-available/lyc-ai\r"
+expect "# "
+send "echo '=== Test API Endpoints ==='\r"
+expect "# "
+send "curl -s http://localhost/api/health\r"
+expect "# "
+send "curl -s http://localhost/api/conversations\r"
+expect "# "
+send "curl -s http://localhost/api/kb/categories\r"
+expect "# "
+send "echo '=== Port Check ==='\r"
+expect "# "
+send "netstat -tlnp | grep :300\r"
+expect "# "
+send "exit\r"
+expect eof

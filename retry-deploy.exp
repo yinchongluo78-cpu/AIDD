@@ -1,0 +1,122 @@
+#!/usr/bin/expect -f
+
+set timeout 900
+log_user 1
+
+set host "47.236.103.35"
+set user "root"
+set password "Lyc001286"
+
+puts "\n========================================="
+puts "尝试连接服务器: ${host}"
+puts "=========================================\n"
+
+spawn ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=60 ${user}@${host}
+
+set connection_established 0
+
+expect {
+    timeout {
+        puts "\n❌ 连接超时，无法连接到服务器"
+        puts "可能原因："
+        puts "1. 网络连接问题"
+        puts "2. 服务器防火墙阻止连接"
+        puts "3. SSH 服务未运行"
+        exit 1
+    }
+    "password:" {
+        set connection_established 1
+        send "${password}\r"
+        exp_continue
+    }
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    -re "#|\\$" {
+        if {$connection_established == 0} {
+            puts "✅ 已连接到服务器（无需密码）"
+            set connection_established 1
+        }
+    }
+    "Permission denied" {
+        puts "\n❌ 密码错误或权限被拒绝"
+        exit 1
+    }
+}
+
+if {$connection_established == 1} {
+    puts "\n✅ SSH 连接成功！\n"
+
+    puts "========================================="
+    puts "开始部署流程"
+    puts "=========================================\n"
+
+    # 1. 清理旧目录
+    puts "🗑️  步骤1: 清理旧目录..."
+    send "cd /root && rm -rf web\r"
+    expect -re "#|\\$"
+    puts "✅ 完成\n"
+
+    # 2. 克隆仓库
+    puts "📥 步骤2: 克隆代码仓库..."
+    send "git clone https://github.com/yinchongluo78-cpu/AIDD.git web\r"
+    expect {
+        "Cloning" {
+            puts "正在克隆..."
+            exp_continue
+        }
+        "done" {
+            puts "✅ 克隆完成\n"
+        }
+        timeout {
+            puts "⚠️  克隆可能超时，继续执行...\n"
+        }
+    }
+    expect -re "#|\\$"
+
+    # 3. 安装依赖
+    puts "📦 步骤3: 安装依赖..."
+    send "cd /root/web && npm install\r"
+    expect {
+        -re "added|up to date" {
+            puts "依赖安装中..."
+            exp_continue
+        }
+        -re "#|\\$" {
+            puts "✅ 依赖安装完成\n"
+        }
+        timeout {
+            puts "⚠️  npm install 超时，继续执行...\n"
+        }
+    }
+
+    # 4. 构建前端
+    puts "🔨 步骤4: 构建前端..."
+    send "cd /root/web && npm run build\r"
+    expect {
+        "built in" {
+            puts "✅ 构建成功\n"
+        }
+        "error" {
+            puts "❌ 构建出错\n"
+        }
+        timeout {
+            puts "⚠️  构建超时\n"
+        }
+    }
+    expect -re "#|\\$"
+
+    # 5. 验证
+    puts "✅ 步骤5: 验证构建结果..."
+    send "ls -la /root/web/dist/ | head -10\r"
+    expect -re "#|\\$"
+
+    puts "\n========================================="
+    puts "✅ 部署完成！"
+    puts "=========================================\n"
+
+    send "exit\r"
+}
+
+expect eof

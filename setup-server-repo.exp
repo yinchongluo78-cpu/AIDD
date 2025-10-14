@@ -1,0 +1,127 @@
+#!/usr/bin/expect -f
+
+set timeout 600
+
+set host "47.236.103.35"
+set user "root"
+set password "Lyc001286"
+
+puts "🚀 开始在服务器上设置代码仓库..."
+
+spawn ssh ${user}@${host}
+expect {
+    timeout {
+        puts "❌ SSH 连接超时"
+        exit 1
+    }
+    "password:" {
+        send "${password}\r"
+    }
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+}
+
+# 等待登录成功
+expect {
+    "#" { }
+    "$" { }
+    timeout {
+        puts "❌ 登录失败"
+        exit 1
+    }
+}
+
+puts "\n📁 检查现有目录..."
+send "ls -la /root/web\r"
+expect {
+    "#" { }
+    "$" { }
+}
+
+puts "\n🗑️  清理旧目录..."
+send "cd /root && rm -rf web\r"
+expect {
+    "#" { }
+    "$" { }
+}
+
+puts "\n📥 克隆代码仓库..."
+send "cd /root && git clone https://github.com/yinchongluo78-cpu/AIDD.git web\r"
+expect {
+    "Cloning into" {
+        puts "✅ 开始克隆..."
+    }
+    "already exists" {
+        puts "⚠️  目录已存在"
+    }
+    timeout {
+        puts "❌ 克隆超时"
+        exit 1
+    }
+}
+
+expect {
+    "done" {
+        puts "✅ 代码克隆完成"
+    }
+    "#" { }
+    "$" { }
+    timeout {
+        puts "❌ 等待克隆完成超时"
+        exit 1
+    }
+}
+
+puts "\n📦 安装依赖..."
+send "cd /root/web && npm install\r"
+expect {
+    "added" {
+        puts "✅ 依赖安装中..."
+    }
+    "up to date" {
+        puts "✅ 依赖已是最新"
+    }
+    timeout {
+        puts "❌ 安装依赖超时"
+        exit 1
+    }
+}
+
+# 等待 npm install 完成
+expect {
+    "#" { }
+    "$" { }
+    timeout {
+        puts "❌ npm install 执行超时"
+        exit 1
+    }
+}
+
+puts "\n🔨 构建前端..."
+send "cd /root/web && npm run build\r"
+expect {
+    "built in" {
+        puts "✅ 构建成功"
+    }
+    "error" {
+        puts "❌ 构建出错"
+    }
+    timeout {
+        puts "❌ 构建超时"
+    }
+}
+
+# 等待构建完成
+expect {
+    "#" { }
+    "$" { }
+    timeout { }
+}
+
+puts "\n✅ 部署完成！前端已更新到最新版本"
+puts "包含新功能：待解析文档警告提示"
+
+send "exit\r"
+expect eof

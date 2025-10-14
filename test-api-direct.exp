@@ -1,0 +1,30 @@
+#!/usr/bin/expect -f
+set timeout 30
+set password "Lyc001286"
+
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+}
+
+expect "# "
+
+puts "\n测试 API 端点..."
+send "curl -v http://localhost:3003/api/conversations 2>&1 | head -30\r"
+expect "# "
+sleep 3
+
+puts "\n测试知识库分类端点..."
+send "curl -v http://localhost:3003/api/kb/categories 2>&1 | head -30\r"
+expect "# "
+sleep 3
+
+puts "\n检查 Nginx 访问日志..."
+send "tail -20 /var/log/nginx/access.log\r"
+expect "# "
+sleep 2
+
+send "exit\r"
+expect eof

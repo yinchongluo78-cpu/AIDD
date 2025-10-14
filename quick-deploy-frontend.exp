@@ -1,0 +1,53 @@
+#!/usr/bin/expect -f
+
+set timeout 180
+
+set host "47.236.103.35"
+set user "root"
+set password "Lyc001286"
+
+puts "正在连接服务器..."
+
+# 先测试 SSH 连接
+spawn ssh ${user}@${host} "echo 'SSH连接成功'"
+expect {
+    timeout {
+        puts "❌ SSH 连接超时"
+        exit 1
+    }
+    "password:" {
+        send "${password}\r"
+        expect {
+            "SSH连接成功" {
+                puts "✅ SSH 连接正常"
+            }
+            timeout {
+                puts "❌ 认证失败"
+                exit 1
+            }
+        }
+    }
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+}
+
+puts "\n开始上传前端文件..."
+
+# 上传前端 dist 目录
+spawn bash -c "cd /Users/luoyinchong/Desktop/lyc2/web && tar czf - dist/ | ssh ${user}@${host} 'cd /root/web && tar xzf -'"
+expect {
+    "password:" {
+        send "${password}\r"
+        exp_continue
+    }
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    eof
+}
+
+puts "\n✅ 前端部署完成！"
+puts "已上传到: /root/web/dist/"

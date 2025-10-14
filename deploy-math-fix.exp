@@ -1,0 +1,53 @@
+#!/usr/bin/expect -f
+set timeout 300
+set password "Lyc001286"
+
+# 上传文件
+spawn scp deploy.tar.gz root@120.24.22.244:/tmp/
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    eof
+}
+
+# 登录并部署
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+}
+
+expect "# "
+send "cd /var/www/lyc-ai\r"
+expect "# "
+send "tar -czf ../lyc-ai-backup-\$(date +%Y%m%d-%H%M).tar.gz .\r"
+expect "# "
+send "tar -xzf /tmp/deploy.tar.gz\r"
+expect "# "
+send "cd api\r"
+expect "# "
+send "npm install --production\r"
+expect "# "
+send "npx prisma generate\r"
+expect "# "
+send "npx tsc\r"
+expect "# "
+send "pm2 restart lyc-ai-api || pm2 start dist/index.js --name lyc-ai-api\r"
+expect "# "
+send "systemctl reload nginx\r"
+expect "# "
+send "pm2 status\r"
+expect "# "
+send "exit\r"
+expect eof

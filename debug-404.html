@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>404错误诊断</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; }
+        .result { margin: 10px 0; padding: 10px; background: #f5f5f5; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e8; color: #2e7d32; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>404错误诊断工具</h1>
+    
+    <div class="test-section">
+        <h3>1. 环境变量检查</h3>
+        <div id="env-result" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>2. 本地存储检查</h3>
+        <div id="storage-result" class="result"></div>
+        <button onclick="clearStorage()">清除本地存储</button>
+    </div>
+    
+    <div class="test-section">
+        <h3>3. API连接测试</h3>
+        <button onclick="testHealth()">测试健康检查</button>
+        <button onclick="testConversations()">测试对话API</button>
+        <button onclick="testCategories()">测试分类API</button>
+        <div id="api-result" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>4. 网络请求详情</h3>
+        <div id="network-result" class="result"></div>
+    </div>
+
+    <script>
+        // 检查环境变量
+        function checkEnvironment() {
+            const apiUrl = 'http://120.24.22.244/api';
+            document.getElementById('env-result').innerHTML = `
+                <strong>API URL:</strong> ${apiUrl}<br>
+                <strong>当前域名:</strong> ${window.location.origin}<br>
+                <strong>用户代理:</strong> ${navigator.userAgent}
+            `;
+        }
+        
+        // 检查本地存储
+        function checkStorage() {
+            const token = localStorage.getItem('token');
+            const user = localStorage.getItem('user');
+            document.getElementById('storage-result').innerHTML = `
+                <strong>Token:</strong> ${token ? '存在 (' + token.substring(0, 20) + '...)' : '不存在'}<br>
+                <strong>User:</strong> ${user ? '存在' : '不存在'}
+            `;
+        }
+        
+        // 清除本地存储
+        function clearStorage() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            checkStorage();
+            addLog('本地存储已清除');
+        }
+        
+        // 测试健康检查
+        async function testHealth() {
+            try {
+                addLog('测试健康检查...');
+                const response = await fetch('http://120.24.22.244/api/health', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                addLog(`健康检查响应: ${response.status} ${response.statusText}`);
+                const data = await response.text();
+                addLog(`响应内容: ${data}`);
+                
+            } catch (error) {
+                addLog(`健康检查错误: ${error.message}`, 'error');
+            }
+        }
+        
+        // 测试对话API
+        async function testConversations() {
+            try {
+                addLog('测试对话API...');
+                const token = localStorage.getItem('token');
+                
+                const headers = {
+                    'Content-Type': 'application/json'
+                };
+                
+                if (token) {
+                    headers['Authorization'] = `Bearer ${token}`;
+                }
+                
+                const response = await fetch('http://120.24.22.244/api/conversations', {
+                    method: 'GET',
+                    headers: headers
+                });
+                
+                addLog(`对话API响应: ${response.status} ${response.statusText}`);
+                const data = await response.text();
+                addLog(`响应内容: ${data}`);
+                
+            } catch (error) {
+                addLog(`对话API错误: ${error.message}`, 'error');
+            }
+        }
+        
+        // 测试分类API
+        async function testCategories() {
+            try {
+                addLog('测试分类API...');
+                const token = localStorage.getItem('token');
+                
+                const headers = {
+                    'Content-Type': 'application/json'
+                };
+                
+                if (token) {
+                    headers['Authorization'] = `Bearer ${token}`;
+                }
+                
+                const response = await fetch('http://120.24.22.244/api/kb/categories', {
+                    method: 'GET',
+                    headers: headers
+                });
+                
+                addLog(`分类API响应: ${response.status} ${response.statusText}`);
+                const data = await response.text();
+                addLog(`响应内容: ${data}`);
+                
+            } catch (error) {
+                addLog(`分类API错误: ${error.message}`, 'error');
+            }
+        }
+        
+        // 添加日志
+        function addLog(message, type = 'info') {
+            const result = document.getElementById('api-result');
+            const div = document.createElement('div');
+            div.className = type === 'error' ? 'error' : 'success';
+            div.innerHTML = `[${new Date().toLocaleTimeString()}] ${message}`;
+            result.appendChild(div);
+        }
+        
+        // 监听网络错误
+        window.addEventListener('error', function(e) {
+            document.getElementById('network-result').innerHTML += `
+                <div class="error">网络错误: ${e.message}</div>
+            `;
+        });
+        
+        // 页面加载时执行检查
+        window.onload = function() {
+            checkEnvironment();
+            checkStorage();
+            addLog('诊断工具已加载');
+        };
+    </script>
+</body>
+</html>

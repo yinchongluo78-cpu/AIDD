@@ -1,0 +1,49 @@
+#!/usr/bin/expect -f
+set timeout 60
+set password "Lyc001286"
+
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+}
+
+expect "# "
+send "cd /var/www/lyc-ai/api\r"
+expect "# "
+send "cat > prisma/schema.prisma << 'EOF'\r"
+send "generator client {\r"
+send "  provider = \"prisma-client-js\"\r"
+send "}\r"
+send "\r"
+send "datasource db {\r"
+send "  provider = \"postgresql\"\r"
+send "  url      = env(\"DATABASE_URL\")\r"
+send "}\r"
+send "\r"
+send "model User {\r"
+send "  id           String      @id @default(uuid()) @db.Uuid\r"
+send "  email        String      @unique\r"
+send "  passwordHash String      @map(\"password_hash\")\r"
+send "  createdAt    DateTime    @default(now()) @map(\"created_at\")\r"
+send "\r"
+send "  profile       Profile?\r"
+send "  categories    KbCategory[]\r"
+send "  documents     KbDocument[]\r"
+send "  conversations Conversation[]\r"
+send "\r"
+send "  @@map(\"users\")\r"
+send "}\r"
+send "EOF\r"
+expect "# "
+send "cat prisma/schema.prisma | head -15\r"
+expect "# "
+send "npx prisma generate\r"
+expect "# "
+send "exit\r"
+expect eof

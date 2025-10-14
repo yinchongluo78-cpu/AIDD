@@ -1,0 +1,14 @@
+#!/usr/bin/expect -f
+set timeout 120
+set password "Lyc001286"
+
+puts "\n上传前端文件到正确的目录..."
+spawn bash -c "cd /Users/luoyinchong/Desktop/lyc2/web/dist && scp -r * root@120.24.22.244:/var/www/lyc-ai/web/dist/"
+expect {
+    "password:" {
+        send "$password\r"
+    }
+}
+expect eof
+
+puts "\n✅ 前端部署完成！"

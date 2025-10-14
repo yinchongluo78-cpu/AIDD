@@ -1,0 +1,20 @@
+#!/usr/bin/expect -f
+set timeout 30
+set password "Lyc001286"
+
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+}
+
+expect "# "
+
+puts "\n查看流式响应相关的错误..."
+send "pm2 logs lyc-ai-api --lines 200 --nostream | grep -A 15 \"流式响应错误\\|DeepSeek\\|axios\"\r"
+expect "# "
+sleep 5
+
+send "exit\r"
+expect eof

@@ -232,7 +232,7 @@ const currentAvatar = computed(() => selectedAvatar.value || defaultAvatar)
 // 获取用户信息
 const fetchUserInfo = async () => {
   try {
-    const response = await api.get('/users/profile')
+    const response = await api.get('/api/users/profile')
     const userData = response.data
     userForm.value = {
       nickname: userData.name || '',
@@ -269,7 +269,7 @@ const handleClose = () => {
 const handleSave = async () => {
   saving.value = true
   try {
-    await api.put('/users/profile', {
+    await api.put('/api/users/profile', {
       name: userForm.value.nickname,
       age: userForm.value.age,
       grade: userForm.value.grade,

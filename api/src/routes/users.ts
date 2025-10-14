@@ -73,4 +73,108 @@ router.put('/profile', authenticateToken, async (req: AuthRequest, res) => {
   }
 })
 
+// ========== 用户活跃时长记录接口 ==========
+
+// 开始新会话
+router.post('/session/start', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    // 结束所有未结束的会话
+    await prisma.userSession.updateMany({
+      where: {
+        userId: req.userId,
+        endTime: null
+      },
+      data: {
+        endTime: new Date()
+      }
+    })
+
+    // 创建新会话
+    const session = await prisma.userSession.create({
+      data: {
+        userId: req.userId!,
+        startTime: new Date()
+      }
+    })
+
+    res.json({ sessionId: session.id })
+  } catch (error) {
+    console.error('创建会话失败:', error)
+    res.status(500).json({ message: '创建会话失败' })
+  }
+})
+
+// 心跳更新（每30秒调用一次）
+router.post('/session/heartbeat', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    const { sessionId } = req.body
+
+    if (!sessionId) {
+      return res.status(400).json({ message: '缺少 sessionId' })
+    }
+
+    // 查找会话
+    const session = await prisma.userSession.findUnique({
+      where: { id: sessionId }
+    })
+
+    if (!session || session.userId !== req.userId) {
+      return res.status(404).json({ message: '会话不存在或无权限' })
+    }
+
+    // 计算活跃时长（秒）
+    const now = new Date()
+    const duration = Math.floor((now.getTime() - session.startTime.getTime()) / 1000)
+
+    // 更新会话时长
+    await prisma.userSession.update({
+      where: { id: sessionId },
+      data: {
+        duration,
+        endTime: now
+      }
+    })
+
+    res.json({ success: true, duration })
+  } catch (error) {
+    console.error('更新会话失败:', error)
+    res.status(500).json({ message: '更新会话失败' })
+  }
+})
+
+// 结束会话
+router.post('/session/end', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    const { sessionId } = req.body
+
+    if (!sessionId) {
+      return res.status(400).json({ message: '缺少 sessionId' })
+    }
+
+    const session = await prisma.userSession.findUnique({
+      where: { id: sessionId }
+    })
+
+    if (!session || session.userId !== req.userId) {
+      return res.status(404).json({ message: '会话不存在或无权限' })
+    }
+
+    const now = new Date()
+    const duration = Math.floor((now.getTime() - session.startTime.getTime()) / 1000)
+
+    await prisma.userSession.update({
+      where: { id: sessionId },
+      data: {
+        endTime: now,
+        duration
+      }
+    })
+
+    res.json({ success: true, duration })
+  } catch (error) {
+    console.error('结束会话失败:', error)
+    res.status(500).json({ message: '结束会话失败' })
+  }
+})
+
 export default router

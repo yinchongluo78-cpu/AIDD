@@ -1,0 +1,25 @@
+#!/usr/bin/expect -f
+
+set timeout 300
+
+# 服务器信息
+set host "47.236.103.35"
+set user "root"
+set password "Lyc001286"
+
+# 上传前端文件
+spawn rsync -avz --progress dist/ ${user}@${host}:/root/web/dist/
+expect {
+    "password:" {
+        send "${password}\r"
+        exp_continue
+    }
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    eof
+}
+
+puts "\n✅ 前端部署完成！"
+puts "请在浏览器中测试：https://your-domain.com"

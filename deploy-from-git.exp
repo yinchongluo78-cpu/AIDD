@@ -1,0 +1,69 @@
+#!/usr/bin/expect -f
+
+set timeout 300
+
+set host "47.236.103.35"
+set user "root"
+set password "Lyc001286"
+
+puts "🚀 开始部署前端..."
+
+spawn ssh ${user}@${host}
+expect {
+    timeout {
+        puts "❌ SSH 连接超时"
+        exit 1
+    }
+    "password:" {
+        send "${password}\r"
+    }
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+}
+
+# 等待登录成功
+expect "#"
+
+puts "\n📥 拉取最新代码..."
+send "cd /root/web && git pull origin main\r"
+expect {
+    "Already up to date" {
+        puts "代码已是最新"
+    }
+    "Updating" {
+        puts "✅ 代码更新成功"
+    }
+    "password" {
+        puts "❌ Git 需要密码，请检查仓库配置"
+        exit 1
+    }
+    timeout {
+        puts "❌ Git pull 超时"
+        exit 1
+    }
+}
+
+expect "#"
+
+puts "\n🔨 构建前端..."
+send "cd /root/web && npm run build\r"
+expect {
+    "built in" {
+        puts "✅ 构建完成"
+    }
+    "error" {
+        puts "❌ 构建出错"
+    }
+    timeout {
+        puts "❌ 构建超时"
+        exit 1
+    }
+}
+
+expect "#"
+
+puts "\n✅ 部署完成！"
+send "exit\r"
+expect eof

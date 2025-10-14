@@ -1,0 +1,20 @@
+#!/usr/bin/expect -f
+set timeout 30
+set password "Lyc001286"
+
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+}
+
+expect "# "
+
+puts "\n查看完整的错误日志（最近200行）..."
+send "pm2 logs lyc-ai-api --err --lines 200 --nostream | tail -100\r"
+expect "# "
+sleep 5
+
+send "exit\r"
+expect eof

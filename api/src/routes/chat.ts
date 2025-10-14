@@ -33,7 +33,27 @@ router.post('/stream', authenticateToken, async (req: AuthRequest, res: Response
     const requestBody = {
       model: 'deepseek-chat',
       messages: [
-        { role: 'system', content: '你是一个专业的AI学习助手，请用中文回答用户的问题。' },
+        { 
+          role: 'system', 
+          content: `你是一个专业的AI学习助手，请用中文回答用户的问题。
+
+【严格禁止HTML】
+绝对不要输出任何HTML标签，包括但不限于：<p>、<div>、<span>、<strong>、<em>、<h1>、<h2>、<h3>、<br>、<ul>、<li>、<ol>等。
+
+【输出格式要求】
+1. 只使用纯文本和Markdown语法
+2. 数学公式使用LaTeX：行内用$...$，块级用$$...$$
+3. 粗体用**文字**，斜体用*文字*
+4. 标题用# ## ###
+5. 代码块用\`\`\`语言\n代码\n\`\`\`
+6. 列表用- 或1. 
+
+【示例输出】
+正确：**这是粗体**，$x^2+1=0$，$$\\int_0^1 x dx$$
+错误：<strong>这是粗体</strong>，<span>$x^2+1=0$</span>
+
+请严格遵守以上规则，绝不输出HTML标签。` 
+        },
         { role: 'user', content: message }
       ],
       temperature: 0.7,

@@ -1,0 +1,35 @@
+#!/usr/bin/expect -f
+set timeout 30
+set password "Lyc001286"
+
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+}
+
+expect "# "
+
+puts "\n查看最新的日志（最近100行）..."
+send "pm2 logs lyc-ai-api --lines 100 --nostream\r"
+expect "# "
+sleep 5
+
+puts "\n检查服务状态..."
+send "pm2 list\r"
+expect "# "
+sleep 2
+
+puts "\n检查数据库中的文档状态..."
+send "cd /var/www/lyc-ai/api && node -e \"const { PrismaClient } = require('@prisma/client'); const prisma = new PrismaClient(); prisma.kbDocument.findMany({ orderBy: { createdAt: 'desc' }, take: 3 }).then(docs => { console.log(JSON.stringify(docs.map(d => ({ filename: d.filename, status: d.status, createdAt: d.createdAt })), null, 2)); process.exit(0); });\"\r"
+expect "# "
+sleep 3
+
+puts "\n检查最新文档的切片数量..."
+send "cd /var/www/lyc-ai/api && node -e \"const { PrismaClient } = require('@prisma/client'); const prisma = new PrismaClient(); prisma.kbDocument.findFirst({ orderBy: { createdAt: 'desc' } }).then(async doc => { if (doc) { const chunks = await prisma.kbChunk.count({ where: { docId: doc.id } }); console.log('最新文档:', doc.filename, '切片数量:', chunks); } process.exit(0); });\"\r"
+expect "# "
+sleep 3
+
+send "exit\r"
+expect eof

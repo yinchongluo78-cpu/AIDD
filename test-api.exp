@@ -1,0 +1,22 @@
+#!/usr/bin/expect -f
+set timeout 15
+set password "Lyc001286"
+
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+}
+
+expect "# "
+send "curl -s http://localhost/api/health\r"
+expect "# "
+send "curl -s http://localhost/api/kb/categories\r"
+expect "# "
+send "exit\r"
+expect eof

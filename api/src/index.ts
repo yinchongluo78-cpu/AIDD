@@ -9,11 +9,12 @@ import conversationsRoutes from './routes/conversations'
 import kbRoutes from './routes/kb'
 import chatRoutes from './routes/chat'
 import uploadRoutes from './routes/upload'
+import adminRoutes from './routes/admin'
 
 dotenv.config()
 
 const app = express()
-const PORT = process.env.PORT || 3001
+const PORT = process.env.PORT || 3000
 export const prisma = new PrismaClient()
 
 const corsOptions = {
@@ -39,6 +40,7 @@ app.use('/api/conversations', conversationsRoutes)
 app.use('/api/kb', kbRoutes)
 app.use('/api/chat', chatRoutes)
 app.use('/api/upload', uploadRoutes)
+app.use('/api/admin', adminRoutes)
 
 app.listen(PORT, () => {
   console.log(`后端服务运行在 http://localhost:${PORT}`)

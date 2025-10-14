@@ -1,0 +1,7 @@
+# 在服务器上执行以下命令安装所有依赖：
+
+cd /root/web/web
+
+pnpm add marked marked-highlight highlight.js katex dompurify markdown-it markdown-it-katex @element-plus/icons-vue axios vue vue-router
+
+pnpm run build

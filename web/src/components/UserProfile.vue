@@ -74,7 +74,7 @@ const form = ref({
 
 const loadProfile = async () => {
   try {
-    const response = await api.get('/users/profile')
+    const response = await api.get('/api/users/profile')
     Object.assign(form.value, response.data)
   } catch (error) {
     console.error('加载个人信息失败', error)
@@ -83,7 +83,7 @@ const loadProfile = async () => {
 
 const saveProfile = async () => {
   try {
-    await api.put('/users/profile', form.value)
+    await api.put('/api/users/profile', form.value)
 
     // 更新本地存储
     const user = JSON.parse(localStorage.getItem('user') || '{}')

@@ -8,6 +8,15 @@ const router = Router()
 // 获取分类列表
 router.get('/categories', authenticateToken, async (req: AuthRequest, res) => {
   try {
+    console.log('=== 获取分类列表 ===')
+    console.log('用户ID:', req.userId)
+    console.log('用户ID类型:', typeof req.userId)
+
+    if (!req.userId) {
+      console.error('错误: userId 未定义')
+      return res.status(401).json({ message: '未授权' })
+    }
+
     const categories = await prisma.kbCategory.findMany({
       where: { userId: req.userId },
       include: {
@@ -20,6 +29,8 @@ router.get('/categories', authenticateToken, async (req: AuthRequest, res) => {
       orderBy: { createdAt: 'desc' }
     })
 
+    console.log('查询到的分类数量:', categories.length)
+
     // 格式化返回数据，添加 documentCount 字段
     const formattedCategories = categories.map(category => ({
       ...category,
@@ -28,8 +39,13 @@ router.get('/categories', authenticateToken, async (req: AuthRequest, res) => {
 
     res.json(formattedCategories)
   } catch (error) {
-    console.error('获取分类错误:', error)
-    res.status(500).json({ message: '获取分类失败' })
+    console.error('获取分类错误 - 详细信息:', {
+      error: error,
+      message: (error as any).message,
+      stack: (error as any).stack,
+      userId: req.userId
+    })
+    res.status(500).json({ message: '获取分类失败', error: (error as any).message })
   }
 })
 
@@ -92,7 +108,16 @@ router.delete('/categories/:id', authenticateToken, async (req: AuthRequest, res
 // 获取分类下的文档列表
 router.get('/categories/:id/documents', authenticateToken, async (req: AuthRequest, res) => {
   try {
+    console.log('=== 获取分类文档 ===')
+    console.log('用户ID:', req.userId)
+    console.log('分类ID:', req.params.id)
+
     const categoryId = req.params.id
+
+    if (!req.userId) {
+      console.error('错误: userId 未定义')
+      return res.status(401).json({ message: '未授权' })
+    }
 
     const documents = await prisma.kbDocument.findMany({
       where: {
@@ -102,15 +127,31 @@ router.get('/categories/:id/documents', authenticateToken, async (req: AuthReque
       orderBy: { createdAt: 'desc' }
     })
 
-    // 转换 BigInt 为普通数字（兼容 fileSize 与 size）
+    console.log('查询到的文档数量:', documents.length)
+
+    // 转换 BigInt 为普通数字
     const documentsResponse = documents.map(doc => ({
-      ...doc,
-      size: Number((doc as any).fileSize ?? (doc as any).size ?? 0)
+      id: doc.id,
+      userId: doc.userId,
+      categoryId: doc.categoryId,
+      filename: doc.filename,
+      fileExt: doc.fileExt,
+      fileSize: Number(doc.fileSize),
+      size: Number(doc.fileSize),
+      ossKey: doc.ossKey,
+      status: doc.status,
+      createdAt: doc.createdAt
     }))
     res.json(documentsResponse)
   } catch (error) {
-    console.error('获取分类文档错误:', error)
-    res.status(500).json({ message: '获取分类文档失败' })
+    console.error('获取分类文档错误 - 详细信息:', {
+      error: error,
+      message: (error as any).message,
+      stack: (error as any).stack,
+      userId: req.userId,
+      categoryId: req.params.id
+    })
+    res.status(500).json({ message: '获取分类文档失败', error: (error as any).message })
   }
 })
 
@@ -127,10 +168,18 @@ router.get('/documents', authenticateToken, async (req: AuthRequest, res) => {
       orderBy: { createdAt: 'desc' }
     })
 
-    // 转换 BigInt 为普通数字（兼容 fileSize 与 size）
+    // 转换 BigInt 为普通数字
     const documentsResponse = documents.map(doc => ({
-      ...doc,
-      size: Number((doc as any).fileSize ?? (doc as any).size ?? 0)
+      id: doc.id,
+      userId: doc.userId,
+      categoryId: doc.categoryId,
+      filename: doc.filename,
+      fileExt: doc.fileExt,
+      fileSize: Number(doc.fileSize),
+      size: Number(doc.fileSize),
+      ossKey: doc.ossKey,
+      status: doc.status,
+      createdAt: doc.createdAt
     }))
     res.json(documentsResponse)
   } catch (error) {
@@ -179,27 +228,22 @@ router.post('/documents', authenticateToken, async (req: AuthRequest, res) => {
 
     const document = await prisma.kbDocument.create({
       data: {
-        // Postgres 模型字段
         filename: name,
         fileExt: fileExt,
         fileSize: BigInt(Number(size || 0)),
         ossKey: ossKey,
-        status: 'pending',  // 新增：文档初始状态
-        // 兼容查询逻辑保留（若模型存在这些列）
-        name: name,
-        url: url,
-        // 关联字段
+        status: 'pending',
         userId: req.userId!,
         categoryId
-      } as any
+      }
     })
 
     console.log('文档记录创建成功:', document)
 
     // 异步解析和存储文档内容
-    parseAndStoreDocument(document.id, document.url)
+    parseAndStoreDocument(document.id, document.ossKey)
       .then(async chunkCount => {
-        console.log(`文档 ${document.name} 解析完成，生成 ${chunkCount} 个切片`)
+        console.log(`文档 ${document.filename} 解析完成，生成 ${chunkCount} 个切片`)
         // 更新文档状态为已完成
         await prisma.kbDocument.update({
           where: { id: document.id },
@@ -207,7 +251,7 @@ router.post('/documents', authenticateToken, async (req: AuthRequest, res) => {
         })
       })
       .catch(async error => {
-        console.error(`文档 ${document.name} 解析失败:`, error)
+        console.error(`文档 ${document.filename} 解析失败:`, error)
         // 更新文档状态为失败
         await prisma.kbDocument.update({
           where: { id: document.id },
@@ -217,9 +261,16 @@ router.post('/documents', authenticateToken, async (req: AuthRequest, res) => {
 
     // 转换 BigInt 为普通数字再返回
     const documentResponse = {
-      ...document,
-      // 统一返回 size 字段以兼容前端显示
-      size: Number((document as any).fileSize ?? (document as any).size ?? 0)
+      id: document.id,
+      userId: document.userId,
+      categoryId: document.categoryId,
+      filename: document.filename,
+      fileExt: document.fileExt,
+      fileSize: Number(document.fileSize),
+      size: Number(document.fileSize),
+      ossKey: document.ossKey,
+      status: document.status,
+      createdAt: document.createdAt
     }
     res.json(documentResponse)
   } catch (error) {
@@ -251,7 +302,7 @@ router.get('/documents/:id/content', authenticateToken, async (req: AuthRequest,
     const path = require('path')
 
     try {
-      const content = await fs.readFile(document.url, 'utf-8')
+      const content = await fs.readFile(document.ossKey, 'utf-8')
       res.type('text/plain').send(content)
     } catch (fileError) {
       console.error('读取文档文件失败:', fileError)
@@ -300,7 +351,7 @@ router.get('/documents/:id', authenticateToken, async (req: AuthRequest, res) =>
     // 转换BigInt为Number
     const documentResponse = {
       ...document,
-      size: Number(document.size)
+      size: Number(document.fileSize)
     }
 
     res.json(documentResponse)

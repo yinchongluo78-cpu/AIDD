@@ -1,0 +1,20 @@
+#!/usr/bin/expect -f
+set timeout 30
+set password "Lyc001286"
+
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+}
+
+expect "# "
+
+puts "\n查询最近上传的文档的 ossKey..."
+send "cd /var/www/lyc-ai/api && node -e \"const { PrismaClient } = require('@prisma/client'); const prisma = new PrismaClient(); prisma.kbDocument.findMany({ orderBy: { createdAt: 'desc' }, take: 5 }).then(docs => { console.log(JSON.stringify(docs.map(d => ({ filename: d.filename, ossKey: d.ossKey, status: d.status })), null, 2)); process.exit(0); });\"\r"
+expect "# "
+sleep 3
+
+send "exit\r"
+expect eof

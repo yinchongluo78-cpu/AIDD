@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API测试</title>
+</head>
+<body>
+    <h1>API连接测试</h1>
+    <div id="results"></div>
+    
+    <script>
+        const API_BASE = 'http://120.24.22.244/api';
+        const results = document.getElementById('results');
+        
+        function log(message) {
+            results.innerHTML += '<p>' + message + '</p>';
+            console.log(message);
+        }
+        
+        async function testAPI() {
+            try {
+                // 1. 测试健康检查
+                log('1. 测试健康检查...');
+                const healthResponse = await fetch(`${API_BASE}/health`);
+                const healthData = await healthResponse.json();
+                log('健康检查结果: ' + JSON.stringify(healthData));
+                
+                // 2. 测试登录
+                log('2. 测试登录...');
+                const loginResponse = await fetch(`${API_BASE}/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        email: 'newuser2@test.com',
+                        password: 'test123'
+                    })
+                });
+                
+                if (!loginResponse.ok) {
+                    throw new Error('登录失败: ' + loginResponse.status);
+                }
+                
+                const loginData = await loginResponse.json();
+                log('登录成功，获得token: ' + loginData.token.substring(0, 20) + '...');
+                
+                // 保存token到localStorage
+                localStorage.setItem('token', loginData.token);
+                localStorage.setItem('user', JSON.stringify(loginData.user));
+                
+                // 3. 测试conversations API
+                log('3. 测试conversations API...');
+                const conversationsResponse = await fetch(`${API_BASE}/conversations`, {
+                    headers: {
+                        'Authorization': `Bearer ${loginData.token}`
+                    }
+                });
+                
+                if (!conversationsResponse.ok) {
+                    throw new Error('Conversations API失败: ' + conversationsResponse.status);
+                }
+                
+                const conversationsData = await conversationsResponse.json();
+                log('Conversations API成功: ' + JSON.stringify(conversationsData));
+                
+                // 4. 测试kb/categories API
+                log('4. 测试kb/categories API...');
+                const categoriesResponse = await fetch(`${API_BASE}/kb/categories`, {
+                    headers: {
+                        'Authorization': `Bearer ${loginData.token}`
+                    }
+                });
+                
+                if (!categoriesResponse.ok) {
+                    throw new Error('Categories API失败: ' + categoriesResponse.status);
+                }
+                
+                const categoriesData = await categoriesResponse.json();
+                log('Categories API成功: ' + JSON.stringify(categoriesData));
+                
+                log('✅ 所有API测试通过！');
+                log('现在可以刷新主应用页面了。');
+                
+            } catch (error) {
+                log('❌ 错误: ' + error.message);
+            }
+        }
+        
+        // 自动运行测试
+        testAPI();
+    </script>
+</body>
+</html>

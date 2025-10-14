@@ -111,7 +111,7 @@ const toggleCategory = async (categoryId: string) => {
 const loadCategoryDocuments = async (categoryId: string) => {
   try {
     loadingDocs.value[categoryId] = true
-    const response = await api.get(`/kb/categories/${categoryId}/documents`)
+    const response = await api.get(`/api/kb/categories/${categoryId}/documents`)
     categoryDocuments.value[categoryId] = response.data
   } catch (error) {
     console.error('加载文档失败:', error)
@@ -176,10 +176,40 @@ const formatSize = (bytes: number) => {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
+// 暴露方法给父组件：添加文档到选择列表并自动展开该分类
+const addDocument = async (doc: any) => {
+  // 如果文档已经被选中，不重复添加
+  if (isDocumentSelected(doc.id)) {
+    console.log('文档已在选择列表中:', doc.filename)
+    return
+  }
+
+  // 添加到选择列表
+  selectedDocuments.value.push(doc)
+  console.log('已添加文档到选择列表:', doc.filename)
+
+  // 触发 change 事件通知父组件
+  emit('change', selectedDocuments.value)
+
+  // 自动展开对应的分类（如果还没展开）
+  if (doc.categoryId && !expandedCategories.value.includes(doc.categoryId)) {
+    expandedCategories.value.push(doc.categoryId)
+    // 如果该分类的文档还没加载，加载它们
+    if (!categoryDocuments.value[doc.categoryId]) {
+      await loadCategoryDocuments(doc.categoryId)
+    }
+  }
+}
+
+// 暴露方法给父组件使用
+defineExpose({
+  addDocument
+})
+
 onMounted(async () => {
   try {
     console.log('KnowledgeSelector: 开始加载分类...')
-    const response = await api.get('/kb/categories')
+    const response = await api.get('/api/kb/categories')
     console.log('KnowledgeSelector: 分类数据:', response.data)
     categories.value = response.data
     console.log('KnowledgeSelector: 加载成功，分类数量:', categories.value.length)

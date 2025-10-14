@@ -1,0 +1,17 @@
+# 在服务器终端执行以下命令：
+
+# 1. 返回项目根目录并安装所有依赖
+cd /root/web
+npm install
+
+# 2. 进入 web 子目录并安装依赖
+cd /root/web/web
+npm install
+
+# 3. 构建前端
+npm run build
+
+# 4. 验证构建结果
+ls -la dist/
+
+# 构建完成后，前端就部署好了！

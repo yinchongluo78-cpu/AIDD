@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>认证状态诊断</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .section {
+            background: white;
+            margin: 20px 0;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .warning { background-color: #fff3cd; color: #856404; }
+        .info { background-color: #d1ecf1; color: #0c5460; }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+        .token-display {
+            word-break: break-all;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔐 认证状态诊断工具</h1>
+    
+    <div class="section">
+        <h2>📋 当前认证状态</h2>
+        <div id="auth-status"></div>
+        <button onclick="checkAuthStatus()">刷新认证状态</button>
+        <button onclick="clearAuth()">清除认证信息</button>
+    </div>
+
+    <div class="section">
+        <h2>🔑 Token 信息</h2>
+        <div id="token-info"></div>
+    </div>
+
+    <div class="section">
+        <h2>👤 用户信息</h2>
+        <div id="user-info"></div>
+    </div>
+
+    <div class="section">
+        <h2>🧪 API 测试</h2>
+        <button onclick="testHealthEndpoint()">测试 /api/health</button>
+        <button onclick="testConversationsEndpoint()">测试 /api/conversations</button>
+        <button onclick="testCategoriesEndpoint()">测试 /api/kb/categories</button>
+        <button onclick="testAuthEndpoint()">测试认证状态</button>
+        <div id="api-results"></div>
+    </div>
+
+    <div class="section">
+        <h2>🔄 快速操作</h2>
+        <button onclick="goToLogin()">跳转到登录页</button>
+        <button onclick="goToChat()">跳转到聊天页</button>
+        <button onclick="reloadPage()">重新加载页面</button>
+    </div>
+
+    <script>
+        const API_BASE = 'http://120.24.22.244/api';
+        
+        function log(message, type = 'info') {
+            console.log(`[${type.toUpperCase()}] ${message}`);
+        }
+
+        function displayResult(elementId, content, type = 'info') {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<div class="status ${type}">${content}</div>`;
+        }
+
+        function appendResult(elementId, content, type = 'info') {
+            const element = document.getElementById(elementId);
+            element.innerHTML += `<div class="status ${type}">${content}</div>`;
+        }
+
+        function checkAuthStatus() {
+            const token = localStorage.getItem('token');
+            const user = localStorage.getItem('user');
+            
+            let status = '';
+            let statusType = 'info';
+            
+            if (token) {
+                status += `✅ Token 存在<br>`;
+                
+                // 解析 JWT token (如果是 JWT)
+                try {
+                    const payload = JSON.parse(atob(token.split('.')[1]));
+                    const exp = payload.exp;
+                    const now = Math.floor(Date.now() / 1000);
+                    
+                    if (exp && exp < now) {
+                        status += `❌ Token 已过期 (过期时间: ${new Date(exp * 1000).toLocaleString()})<br>`;
+                        statusType = 'error';
+                    } else if (exp) {
+                        status += `✅ Token 有效 (过期时间: ${new Date(exp * 1000).toLocaleString()})<br>`;
+                        statusType = 'success';
+                    } else {
+                        status += `⚠️ 无法确定 Token 过期时间<br>`;
+                        statusType = 'warning';
+                    }
+                } catch (e) {
+                    status += `⚠️ Token 格式不是标准 JWT<br>`;
+                    statusType = 'warning';
+                }
+            } else {
+                status += `❌ 未找到 Token<br>`;
+                statusType = 'error';
+            }
+            
+            if (user) {
+                status += `✅ 用户信息存在<br>`;
+            } else {
+                status += `❌ 未找到用户信息<br>`;
+                statusType = 'error';
+            }
+            
+            displayResult('auth-status', status, statusType);
+            
+            // 显示 token 详情
+            if (token) {
+                displayResult('token-info', `<div class="token-display">Token: ${token}</div>`, 'info');
+            } else {
+                displayResult('token-info', '无 Token', 'error');
+            }
+            
+            // 显示用户信息
+            if (user) {
+                try {
+                    const userObj = JSON.parse(user);
+                    displayResult('user-info', `<pre>${JSON.stringify(userObj, null, 2)}</pre>`, 'info');
+                } catch (e) {
+                    displayResult('user-info', `用户信息格式错误: ${user}`, 'error');
+                }
+            } else {
+                displayResult('user-info', '无用户信息', 'error');
+            }
+        }
+
+        async function testApiEndpoint(endpoint, description) {
+            const token = localStorage.getItem('token');
+            const url = `${API_BASE}${endpoint}`;
+            
+            appendResult('api-results', `🔄 测试 ${description} (${url})...`, 'info');
+            
+            try {
+                const headers = {
+                    'Content-Type': 'application/json'
+                };
+                
+                if (token) {
+                    headers['Authorization'] = `Bearer ${token}`;
+                }
+                
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: headers
+                });
+                
+                const responseText = await response.text();
+                let responseData;
+                
+                try {
+                    responseData = JSON.parse(responseText);
+                } catch (e) {
+                    responseData = responseText;
+                }
+                
+                if (response.ok) {
+                    appendResult('api-results', 
+                        `✅ ${description} 成功 (${response.status})<br><pre>${JSON.stringify(responseData, null, 2)}</pre>`, 
+                        'success'
+                    );
+                } else {
+                    appendResult('api-results', 
+                        `❌ ${description} 失败 (${response.status})<br><pre>${JSON.stringify(responseData, null, 2)}</pre>`, 
+                        'error'
+                    );
+                }
+            } catch (error) {
+                appendResult('api-results', 
+                    `💥 ${description} 网络错误: ${error.message}`, 
+                    'error'
+                );
+            }
+        }
+
+        function testHealthEndpoint() {
+            document.getElementById('api-results').innerHTML = '';
+            testApiEndpoint('/health', 'Health 检查');
+        }
+
+        function testConversationsEndpoint() {
+            document.getElementById('api-results').innerHTML = '';
+            testApiEndpoint('/conversations', '对话列表');
+        }
+
+        function testCategoriesEndpoint() {
+            document.getElementById('api-results').innerHTML = '';
+            testApiEndpoint('/kb/categories', '知识库分类');
+        }
+
+        async function testAuthEndpoint() {
+            document.getElementById('api-results').innerHTML = '';
+            
+            // 测试多个可能的认证端点
+            const endpoints = [
+                '/auth/me',
+                '/auth/verify',
+                '/user/profile',
+                '/me'
+            ];
+            
+            for (const endpoint of endpoints) {
+                await testApiEndpoint(endpoint, `认证检查 ${endpoint}`);
+            }
+        }
+
+        function clearAuth() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            displayResult('auth-status', '✅ 认证信息已清除', 'success');
+            displayResult('token-info', '无 Token', 'info');
+            displayResult('user-info', '无用户信息', 'info');
+        }
+
+        function goToLogin() {
+            window.location.href = '/login';
+        }
+
+        function goToChat() {
+            window.location.href = '/chat';
+        }
+
+        function reloadPage() {
+            window.location.reload();
+        }
+
+        // 页面加载时自动检查状态
+        window.onload = function() {
+            checkAuthStatus();
+        };
+    </script>
+</body>
+</html>

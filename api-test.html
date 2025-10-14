@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API连接测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .test-section {
+            background: white;
+            margin: 20px 0;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .info { background-color: #d1ecf1; color: #0c5460; }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔧 API连接测试</h1>
+    
+    <div class="test-section">
+        <h2>📋 环境配置检查</h2>
+        <div id="env-status"></div>
+        <button onclick="checkEnvironment()">检查环境配置</button>
+    </div>
+
+    <div class="test-section">
+        <h2>🌐 API连接测试</h2>
+        <div id="api-status"></div>
+        <button onclick="testApiConnection()">测试API连接</button>
+        <button onclick="testWithAuth()">测试认证API</button>
+    </div>
+
+    <div class="test-section">
+        <h2>🔑 认证测试</h2>
+        <div id="auth-status"></div>
+        <button onclick="testLogin()">测试登录</button>
+        <button onclick="clearStorage()">清除存储</button>
+    </div>
+
+    <script>
+        function log(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            element.innerHTML += `<div class="status ${type}">${message}</div>`;
+        }
+
+        function clear(elementId) {
+            document.getElementById(elementId).innerHTML = '';
+        }
+
+        function checkEnvironment() {
+            clear('env-status');
+            
+            // 模拟检查环境变量（在实际应用中这些会从Vite注入）
+            const expectedApiUrl = 'http://120.24.22.244';
+            
+            log('env-status', `✅ 预期API URL: ${expectedApiUrl}`, 'success');
+            log('env-status', `ℹ️ 修复说明: 已移除URL中重复的/api路径`, 'info');
+            log('env-status', `ℹ️ 现在API请求将正确构造为: ${expectedApiUrl}/api/...`, 'info');
+        }
+
+        async function testApiConnection() {
+            clear('api-status');
+            log('api-status', '🔄 测试API连接...', 'info');
+            
+            const apiUrl = 'http://120.24.22.244';
+            
+            try {
+                // 测试健康检查端点
+                const healthResponse = await fetch(`${apiUrl}/api/health`);
+                if (healthResponse.ok) {
+                    const healthData = await healthResponse.json();
+                    log('api-status', `✅ Health检查成功: ${JSON.stringify(healthData)}`, 'success');
+                } else {
+                    log('api-status', `❌ Health检查失败: ${healthResponse.status}`, 'error');
+                }
+                
+                // 测试需要认证的端点（应该返回401）
+                const conversationsResponse = await fetch(`${apiUrl}/api/conversations`);
+                if (conversationsResponse.status === 401) {
+                    log('api-status', `✅ Conversations端点正常（返回401，需要认证）`, 'success');
+                } else if (conversationsResponse.ok) {
+                    log('api-status', `✅ Conversations端点可访问`, 'success');
+                } else {
+                    log('api-status', `❌ Conversations端点错误: ${conversationsResponse.status}`, 'error');
+                }
+                
+                // 测试知识库分类端点
+                const categoriesResponse = await fetch(`${apiUrl}/api/kb/categories`);
+                if (categoriesResponse.status === 401) {
+                    log('api-status', `✅ Categories端点正常（返回401，需要认证）`, 'success');
+                } else if (categoriesResponse.ok) {
+                    log('api-status', `✅ Categories端点可访问`, 'success');
+                } else {
+                    log('api-status', `❌ Categories端点错误: ${categoriesResponse.status}`, 'error');
+                }
+                
+            } catch (error) {
+                log('api-status', `💥 网络错误: ${error.message}`, 'error');
+            }
+        }
+
+        async function testWithAuth() {
+            clear('api-status');
+            log('api-status', '🔄 测试带认证的API连接...', 'info');
+            
+            const apiUrl = 'http://120.24.22.244';
+            const token = localStorage.getItem('token');
+            
+            if (!token) {
+                log('api-status', '⚠️ 未找到认证token，请先登录', 'error');
+                return;
+            }
+            
+            try {
+                const headers = {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                };
+                
+                // 测试对话列表
+                const conversationsResponse = await fetch(`${apiUrl}/api/conversations`, { headers });
+                if (conversationsResponse.ok) {
+                    const conversations = await conversationsResponse.json();
+                    log('api-status', `✅ 对话列表获取成功: ${conversations.length} 个对话`, 'success');
+                } else {
+                    log('api-status', `❌ 对话列表获取失败: ${conversationsResponse.status}`, 'error');
+                }
+                
+                // 测试知识库分类
+                const categoriesResponse = await fetch(`${apiUrl}/api/kb/categories`, { headers });
+                if (categoriesResponse.ok) {
+                    const categories = await categoriesResponse.json();
+                    log('api-status', `✅ 知识库分类获取成功: ${categories.length} 个分类`, 'success');
+                } else {
+                    log('api-status', `❌ 知识库分类获取失败: ${categoriesResponse.status}`, 'error');
+                }
+                
+            } catch (error) {
+                log('api-status', `💥 网络错误: ${error.message}`, 'error');
+            }
+        }
+
+        async function testLogin() {
+            clear('auth-status');
+            log('auth-status', '🔄 测试登录功能...', 'info');
+            
+            const apiUrl = 'http://120.24.22.244';
+            
+            try {
+                // 使用测试账号登录
+                const loginResponse = await fetch(`${apiUrl}/api/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        email: 'test@example.com',
+                        password: 'test123'
+                    })
+                });
+                
+                if (loginResponse.ok) {
+                    const loginData = await loginResponse.json();
+                    localStorage.setItem('token', loginData.token);
+                    localStorage.setItem('user', JSON.stringify(loginData.user));
+                    log('auth-status', `✅ 登录成功: ${loginData.user.email}`, 'success');
+                    log('auth-status', `🔑 Token已保存到localStorage`, 'info');
+                } else {
+                    const errorData = await loginResponse.json();
+                    log('auth-status', `❌ 登录失败: ${errorData.message}`, 'error');
+                }
+                
+            } catch (error) {
+                log('auth-status', `💥 登录错误: ${error.message}`, 'error');
+            }
+        }
+
+        function clearStorage() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            clear('auth-status');
+            log('auth-status', '✅ 本地存储已清除', 'success');
+        }
+
+        // 页面加载时自动检查环境
+        window.onload = function() {
+            checkEnvironment();
+        };
+    </script>
+</body>
+</html>

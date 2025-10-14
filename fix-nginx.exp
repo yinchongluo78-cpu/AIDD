@@ -1,0 +1,26 @@
+#!/usr/bin/expect -f
+set timeout 15
+set password "Lyc001286"
+
+spawn ssh root@120.24.22.244
+expect {
+    "password:" {
+        send "$password\r"
+    }
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+}
+
+expect "# "
+send "sed -i 's/proxy_pass http:\\/\\/localhost:3000;/proxy_pass http:\\/\\/localhost:3001;/' /etc/nginx/sites-available/lyc-ai\r"
+expect "# "
+send "nginx -t\r"
+expect "# "
+send "systemctl reload nginx\r"
+expect "# "
+send "echo 'Nginx configuration updated and reloaded'\r"
+expect "# "
+send "exit\r"
+expect eof
