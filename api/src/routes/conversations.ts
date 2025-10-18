@@ -134,11 +134,11 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
       console.log('自定义指令内容（前100字）:', currentConversation.customInstructions.substring(0, 100) + '...')
     }
 
-    // 获取历史消息
+    // 获取历史消息（增加到20条以提供更完整的上下文）
     const messages = await prisma.message.findMany({
       where: { conversationId },
       orderBy: { createdAt: 'asc' },
-      take: 10
+      take: 20
     })
 
     const apiMessages = messages.slice(0, -1).map(msg => ({
@@ -172,8 +172,8 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
           const signedUrl = await getSignedUrl(ossKey, 3600)
           console.log('生成签名URL用于OCR:', signedUrl.substring(0, 100) + '...')
 
-          // 使用签名URL调用OCR
-          ocrResult = await analyzeHomework(signedUrl)
+          // 使用签名URL调用OCR，传入用户问题以智能识别
+          ocrResult = await analyzeHomework(signedUrl, content || '')
           console.log(`✅ OCR识别完成，结果长度: ${ocrResult.length}`)
         }
       } catch (error) {
@@ -204,15 +204,25 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
         console.log(`✅ 找到 ${relevantChunks.length} 个相关文档片段`)
 
         // 构建知识库上下文
-        kbContext = '\n\n===== 知识库参考内容 =====\n'
+        kbContext = '\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+        kbContext += '⚠️  【备用资料库 - 仅在明确要求时使用】 ⚠️\n'
+        kbContext += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'
+        kbContext += '🚨 重要警告：\n'
+        kbContext += '以下内容是用户上传的学习资料，仅供需要时参考。\n'
+        kbContext += '❌ 如果正在答题/练习/测验，请完全忽略这些内容！\n'
+        kbContext += '❌ 不要看到关键词就自动开始讲解！\n'
+        kbContext += '✅ 只有用户明确说"讲一下XXX"时，才使用这些资料。\n\n'
+
         relevantChunks.forEach((item, index) => {
-          kbContext += `\n【文档${index + 1}：${item.document.filename}】\n`
-          kbContext += item.chunk.content + '\n'
+          kbContext += `【备用资料 ${index + 1}/${relevantChunks.length}：${item.document.filename}】\n`
+          kbContext += item.chunk.content + '\n\n'
 
           // 记录引用信息
           citations.push(`${item.document.filename} - 片段${index + 1}`)
         })
-        kbContext += '\n===== 知识库内容结束 =====\n'
+        kbContext += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+        kbContext += '⚠️  备用资料结束 - 请根据对话上下文判断是否使用  ⚠️\n'
+        kbContext += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
       } else {
         console.log('❌ 未找到相关文档片段')
         console.log('可能原因：1) 文档未解析 2) 文档没有内容 3) 查询关键词不匹配')
@@ -240,7 +250,7 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
 
     if (kbContext) {
       if (fullContent) {
-        fullContent += `\n${kbContext}\n请基于以上内容（包括图片和知识库）回答问题。`
+        fullContent += `\n${kbContext}\n注意：以上参考资料仅供辅助，请优先根据对话上下文理解我的意图。`
       } else {
         fullContent = `${kbContext}\n请根据以上文档内容，总结主要信息并回答我的问题。`
       }
@@ -257,7 +267,34 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
     }
 
     // 使用自定义指令或默认系统消息
-    const defaultSystemMessage = '你是一个专业的AI学习助手，请用中文回答用户的问题。'
+    const defaultSystemMessage = `你是AI学习助手，用中文自然地与用户对话。
+
+【核心原则：对话连贯性 + 自然交流】
+
+**回复前的判断流程：**
+
+1️⃣ 先看历史对话，我上一条消息是什么？
+   - 如果我刚出了**具体的填空题/选择题**（如"圆有（）条半径"），且用户回复简短（如"无数 半径 16"）
+   → 这是答题！直接批改答案，继续后续流程
+
+   - 如果用户说"我想学XXX" / "讲一下XXX" / "给我介绍一下XXX"
+   → 这是学习请求！正常开始教学，不要用"批改"格式
+
+   - 如果用户是日常对话（如"你先列举一下课程大纲"）
+   → 正常对话！不要用"批改"格式
+
+2️⃣ 关于回复格式：
+   ✅ **只有用户在回答具体题目时**，才使用简洁的批改格式
+   ❌ 用户提学习请求、日常对话时，直接自然回复，不要加"🚨 批改反馈 🚨"
+
+3️⃣ 知识库使用：
+   - 下方如果有【备用资料库】内容，只在用户明确要学习时使用
+   - 答题/测验时完全忽略知识库内容
+
+---
+
+**记住：自然对话 > 机械批改。让对话像真人老师一样流畅。**`
+
     const systemMessage = currentConversation?.customInstructions || defaultSystemMessage
 
     console.log('=== 系统提示词 ===')
@@ -269,13 +306,13 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
     // 构建消息数组并检查总大小
     const apiRequestMessages = [
       { role: 'system', content: systemMessage },
-      ...apiMessages.slice(-10), // 保留最近10条历史消息（根据用户要求）
+      ...apiMessages.slice(-15), // 保留最近15条历史消息，提供更完整的上下文
       { role: 'user', content: fullContent }
     ]
 
     // 检查请求JSON的总大小
     const requestBody = {
-      model: 'deepseek-chat',
+      model: 'deepseek-reasoner',  // 🚀 升级到 DeepSeek R1，推理能力更强
       messages: apiRequestMessages,
       temperature: 0.7,
       max_tokens: 2000,
@@ -466,7 +503,7 @@ router.post('/:id/messages', authenticateToken, async (req: AuthRequest, res) =>
 
       // 生成签名URL
       const signedUrl = await getSignedUrl(ossKey, 3600)
-      let imageAnalysis = await analyzeHomework(signedUrl)
+      let imageAnalysis = await analyzeHomework(signedUrl, content || '')
 
       // 限制图片分析结果的长度
       const maxAnalysisLength = 45000

@@ -3,12 +3,12 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
 model User {
-  id           String      @id @default(uuid()) @db.Uuid
+  id           String      @id @default(uuid())
   email        String      @unique
   passwordHash String      @map("password_hash")
   role         String      @default("user")
@@ -24,13 +24,15 @@ model User {
 }
 
 model Profile {
-  userId    String   @id @db.Uuid @map("user_id")
-  name      String?
-  age       Int?
-  grade     String?
-  phone     String?
-  avatarUrl String?  @map("avatar_url")
-  updatedAt DateTime @default(now()) @map("updated_at")
+  userId               String   @id @map("user_id")
+  name                 String?
+  age                  Int?
+  grade                String?
+  phone                String?
+  avatarUrl            String?  @map("avatar_url")
+  hasCompletedTutorial Boolean  @default(false) @map("has_completed_tutorial")
+  tutorialStep         Int      @default(0) @map("tutorial_step")
+  updatedAt            DateTime @default(now()) @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -38,8 +40,8 @@ model Profile {
 }
 
 model KbCategory {
-  id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @db.Uuid @map("user_id")
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
   name      String
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -51,9 +53,9 @@ model KbCategory {
 }
 
 model KbDocument {
-  id         String   @id @default(uuid()) @db.Uuid
-  userId     String   @db.Uuid @map("user_id")
-  categoryId String   @db.Uuid @map("category_id")
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  categoryId String   @map("category_id")
   filename   String
   fileExt    String   @map("file_ext")
   fileSize   BigInt   @map("file_size")
@@ -70,8 +72,8 @@ model KbDocument {
 }
 
 model KbChunk {
-  id        String   @id @default(uuid()) @db.Uuid
-  docId     String   @db.Uuid @map("doc_id")
+  id        String   @id @default(uuid())
+  docId     String   @map("doc_id")
   seq       Int
   content   String
   createdAt DateTime @default(now()) @map("created_at")
@@ -83,10 +85,10 @@ model KbChunk {
 }
 
 model Conversation {
-  id                 String   @id @default(uuid()) @db.Uuid
-  userId             String   @db.Uuid @map("user_id")
+  id                 String   @id @default(uuid())
+  userId             String   @map("user_id")
   title              String?
-  customInstructions String?  @map("custom_instructions") @db.Text
+  customInstructions String?  @map("custom_instructions")
   createdAt          DateTime @default(now()) @map("created_at")
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -97,13 +99,13 @@ model Conversation {
 }
 
 model Message {
-  id              String    @id @default(uuid()) @db.Uuid
-  conversationId  String    @db.Uuid @map("conversation_id")
+  id              String    @id @default(uuid())
+  conversationId  String    @map("conversation_id")
   role            String
   content         String
   imageOssKey     String?   @map("image_oss_key")
   ocrText         String?   @map("ocr_text")
-  citations       Json?
+  citations       String?
   createdAt       DateTime  @default(now()) @map("created_at")
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -113,11 +115,11 @@ model Message {
 }
 
 model UserSession {
-  id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @db.Uuid @map("user_id")
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
   startTime DateTime @default(now()) @map("start_time")
   endTime   DateTime? @map("end_time")
-  duration  Int      @default(0) // 活跃时长（秒）
+  duration  Int      @default(0)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
