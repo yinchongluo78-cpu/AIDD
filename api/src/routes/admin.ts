@@ -1,6 +1,7 @@
 import express from 'express'
 import { prisma } from '../index'
 import { syncAllToFeishu } from '../services/feishuSync'
+import OSS from 'ali-oss'
 
 const router = express.Router()
 
@@ -23,6 +24,115 @@ router.get('/stats', async (req, res) => {
   } catch (error) {
     console.error('获取统计数据失败:', error)
     res.status(500).json({ message: '获取统计数据失败' })
+  }
+})
+
+// 趋势数据（最近30天）
+router.get('/trends', async (req, res) => {
+  try {
+    const days = Number(req.query.days) || 30
+    const now = new Date()
+    const startDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000)
+
+    // 获取所有用户、对话和会话数据
+    const [allUsers, conversations, sessions] = await Promise.all([
+      prisma.user.findMany({
+        select: {
+          id: true,
+          createdAt: true
+        },
+        orderBy: {
+          createdAt: 'asc'
+        }
+      }),
+      prisma.conversation.findMany({
+        where: {
+          createdAt: {
+            gte: startDate
+          }
+        },
+        select: {
+          userId: true,
+          createdAt: true
+        }
+      }),
+      ((prisma as any).userSession ? (prisma as any).userSession.findMany({
+        where: {
+          startTime: {
+            gte: startDate
+          }
+        },
+        select: {
+          userId: true,
+          startTime: true,
+          duration: true
+        }
+      }) : Promise.resolve([])) as Promise<any[]>
+    ])
+
+    // 初始化日期数组
+    const dates: string[] = []
+    const cumulativeUsers: number[] = []
+    const activeUsers: number[] = []
+    const conversationCounts: number[] = []
+    const activeDurations: number[] = []
+
+    // 生成最近N天的日期
+    for (let i = days - 1; i >= 0; i--) {
+      const date = new Date(now.getTime() - i * 24 * 60 * 60 * 1000)
+      const dateStr = date.toISOString().split('T')[0]
+      dates.push(dateStr)
+    }
+
+    // 计算每天的数据
+    dates.forEach((dateStr, index) => {
+      const date = new Date(dateStr)
+      const nextDate = new Date(date.getTime() + 24 * 60 * 60 * 1000)
+
+      // 1. 累计用户数 - 截至当天的总用户数
+      const cumulativeCount = allUsers.filter(user =>
+        new Date(user.createdAt) <= nextDate
+      ).length
+      cumulativeUsers.push(cumulativeCount)
+
+      // 2. 活跃用户数 - 当天有对话的用户数
+      const activeUserIds = new Set(
+        conversations
+          .filter(conv => {
+            const convDate = new Date(conv.createdAt)
+            return convDate >= date && convDate < nextDate
+          })
+          .map(conv => conv.userId)
+      )
+      activeUsers.push(activeUserIds.size)
+
+      // 3. 对话数 - 当天创建的对话数
+      const dailyConversations = conversations.filter(conv => {
+        const convDate = new Date(conv.createdAt)
+        return convDate >= date && convDate < nextDate
+      }).length
+      conversationCounts.push(dailyConversations)
+
+      // 4. 用户在线时长 - 当天所有会话的总时长（秒）
+      const dailyDuration = sessions
+        .filter(session => {
+          const sessionDate = new Date(session.startTime)
+          return sessionDate >= date && sessionDate < nextDate
+        })
+        .reduce((sum, session) => sum + session.duration, 0)
+      activeDurations.push(dailyDuration)
+    })
+
+    res.json({
+      dates,
+      cumulativeUsers,
+      activeUsers,
+      conversationCounts,
+      activeDurations
+    })
+  } catch (error) {
+    console.error('获取趋势数据失败:', error)
+    res.status(500).json({ message: '获取趋势数据失败' })
   }
 })
 
@@ -103,8 +213,7 @@ router.get('/users', async (req, res) => {
           profile: true,
           conversations: {
             select: { id: true }
-          },
-          sessions: true
+          }
         },
         orderBy: {
           createdAt: 'desc'
@@ -113,9 +222,16 @@ router.get('/users', async (req, res) => {
       prisma.user.count({ where })
     ])
 
-    res.json({
-      data: users.map(user => {
-        const totalActiveDuration = user.sessions.reduce((sum, session) => sum + session.duration, 0)
+    // 获取每个用户的会话数据
+    const usersWithSessions = await Promise.all(
+      users.map(async (user) => {
+        const sessions = await ((prisma as any).userSession ? (prisma as any).userSession.findMany({
+          where: { userId: user.id }
+        }) : Promise.resolve([]))
+
+        const sessionCount = sessions.length
+        const totalActiveDuration = sessions.reduce((sum: number, s: any) => sum + (s.duration || 0), 0)
+
         return {
           id: user.id,
           name: user.profile?.name || '-',
@@ -124,11 +240,15 @@ router.get('/users', async (req, res) => {
           age: user.profile?.age,
           grade: user.profile?.grade,
           conversationCount: user.conversations.length,
-          sessionCount: user.sessions.length,
+          sessionCount,
           totalActiveDuration, // 总活跃时长（秒）
           createdAt: user.createdAt
         }
-      }),
+      })
+    )
+
+    res.json({
+      data: usersWithSessions,
       total
     })
   } catch (error) {
@@ -137,82 +257,7 @@ router.get('/users', async (req, res) => {
   }
 })
 
-// 用户详情
-router.get('/users/:id', async (req, res) => {
-  try {
-    const { id } = req.params
-
-    const user = await prisma.user.findUnique({
-      where: { id },
-      include: {
-        profile: true,
-        conversations: {
-          take: 5,
-          orderBy: {
-            createdAt: 'desc'
-          },
-          include: {
-            messages: {
-              select: { id: true }
-            }
-          }
-        },
-        documents: {
-          select: { id: true }
-        },
-        sessions: {
-          orderBy: {
-            startTime: 'desc'
-          }
-        }
-      }
-    })
-
-    if (!user) {
-      return res.status(404).json({ message: '用户不存在' })
-    }
-
-    const messageCount = await prisma.message.count({
-      where: {
-        conversation: {
-          userId: id
-        }
-      }
-    })
-
-    // 计算总活跃时长（秒）
-    const totalActiveDuration = user.sessions.reduce((sum, session) => sum + session.duration, 0)
-
-    // 计算会话次数
-    const sessionCount = user.sessions.length
-
-    res.json({
-      id: user.id,
-      name: user.profile?.name || '-',
-      email: user.email,
-      phone: user.profile?.phone,
-      age: user.profile?.age,
-      grade: user.profile?.grade,
-      conversationCount: user.conversations.length,
-      messageCount,
-      documentCount: user.documents.length,
-      sessionCount,
-      totalActiveDuration, // 总活跃时长（秒）
-      createdAt: user.createdAt,
-      recentConversations: user.conversations.map((conv: any) => ({
-        id: conv.id,
-        title: conv.title,
-        messageCount: conv.messages.length,
-        createdAt: conv.createdAt
-      }))
-    })
-  } catch (error) {
-    console.error('获取用户详情失败:', error)
-    res.status(500).json({ message: '获取用户详情失败' })
-  }
-})
-
-// 导出用户数据
+// 导出用户数据 (必须在 :id 动态路由之前)
 router.get('/users/export', async (req, res) => {
   try {
     const users = await prisma.user.findMany({
@@ -241,6 +286,78 @@ router.get('/users/export', async (req, res) => {
   } catch (error) {
     console.error('导出用户数据失败:', error)
     res.status(500).json({ message: '导出用户数据失败' })
+  }
+})
+
+// 用户详情
+router.get('/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const user = await prisma.user.findUnique({
+      where: { id },
+      include: {
+        profile: true,
+        conversations: {
+          take: 5,
+          orderBy: {
+            createdAt: 'desc'
+          },
+          include: {
+            messages: {
+              select: { id: true }
+            }
+          }
+        },
+        documents: {
+          select: { id: true }
+        }
+      }
+    })
+
+    if (!user) {
+      return res.status(404).json({ message: '用户不存在' })
+    }
+
+    const [messageCount, sessions] = await Promise.all([
+      prisma.message.count({
+        where: {
+          conversation: {
+            userId: id
+          }
+        }
+      }),
+      ((prisma as any).userSession ? (prisma as any).userSession.findMany({
+        where: { userId: id }
+      }) : Promise.resolve([]))
+    ])
+
+    const sessionCount = sessions.length
+    const totalActiveDuration = sessions.reduce((sum: number, s: any) => sum + (s.duration || 0), 0)
+
+    res.json({
+      id: user.id,
+      name: user.profile?.name || '-',
+      email: user.email,
+      phone: user.profile?.phone,
+      age: user.profile?.age,
+      grade: user.profile?.grade,
+      conversationCount: user.conversations.length,
+      messageCount,
+      documentCount: user.documents.length,
+      sessionCount,
+      totalActiveDuration, // 总活跃时长（秒）
+      createdAt: user.createdAt,
+      recentConversations: user.conversations.map((conv: any) => ({
+        id: conv.id,
+        title: conv.title,
+        messageCount: conv.messages.length,
+        createdAt: conv.createdAt
+      }))
+    })
+  } catch (error) {
+    console.error('获取用户详情失败:', error)
+    res.status(500).json({ message: '获取用户详情失败' })
   }
 })
 
@@ -275,7 +392,10 @@ router.get('/conversations', async (req, res) => {
             }
           },
           messages: {
-            select: { id: true }
+            select: {
+              id: true,
+              citations: true
+            }
           }
         },
         orderBy: {
@@ -286,20 +406,84 @@ router.get('/conversations', async (req, res) => {
     ])
 
     res.json({
-      data: conversations.map(conv => ({
-        id: conv.id,
-        userName: conv.user.profile?.name || conv.user.email,
-        title: conv.title,
-        messageCount: conv.messages.length,
-        hasInstructions: !!conv.customInstructions,
-        hasKnowledgeBase: false, // 需要从消息中检查
-        createdAt: conv.createdAt
-      })),
+      data: conversations.map(conv => {
+        // 检查是否有任何消息包含 citations（知识库引用）
+        const hasKnowledgeBase = conv.messages.some(msg => {
+          if (!msg.citations) return false
+          try {
+            const citations = typeof msg.citations === 'string' ? JSON.parse(msg.citations) : msg.citations
+            return Array.isArray(citations) && citations.length > 0
+          } catch {
+            return false
+          }
+        })
+
+        return {
+          id: conv.id,
+          userName: conv.user.profile?.name || conv.user.email,
+          title: conv.title,
+          messageCount: conv.messages.length,
+          hasInstructions: !!conv.customInstructions,
+          hasKnowledgeBase,
+          createdAt: conv.createdAt
+        }
+      }),
       total
     })
   } catch (error) {
     console.error('获取对话列表失败:', error)
     res.status(500).json({ message: '获取对话列表失败' })
+  }
+})
+
+// 导出对话数据 (必须在 :id 动态路由之前)
+router.get('/conversations/export', async (req, res) => {
+  try {
+    const conversations = await prisma.conversation.findMany({
+      include: {
+        user: {
+          include: {
+            profile: true
+          }
+        },
+        messages: {
+          select: {
+            id: true,
+            citations: true
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    })
+
+    res.json({
+      data: conversations.map(conv => {
+        // 检查是否有任何消息包含 citations（知识库引用）
+        const hasKnowledgeBase = conv.messages.some(msg => {
+          if (!msg.citations) return false
+          try {
+            const citations = typeof msg.citations === 'string' ? JSON.parse(msg.citations) : msg.citations
+            return Array.isArray(citations) && citations.length > 0
+          } catch {
+            return false
+          }
+        })
+
+        return {
+          userName: conv.user.profile?.name || conv.user.email,
+          title: conv.title,
+          messageCount: conv.messages.length,
+          hasInstructions: !!conv.customInstructions,
+          hasKnowledgeBase,
+          createdAt: conv.createdAt
+        }
+      })
+    })
+  } catch (error) {
+    console.error('导出对话数据失败:', error)
+    res.status(500).json({ message: '导出对话数据失败' })
   }
 })
 
@@ -328,6 +512,36 @@ router.get('/conversations/:id', async (req, res) => {
       return res.status(404).json({ message: '对话不存在' })
     }
 
+    // 创建OSS客户端
+    const ossClient = new OSS({
+      region: process.env.OSS_REGION!,
+      accessKeyId: process.env.OSS_ACCESS_KEY_ID!,
+      accessKeySecret: process.env.OSS_ACCESS_KEY_SECRET!,
+      bucket: process.env.OSS_BUCKET!
+    })
+
+    // 为每个有图片的消息生成预签名URL
+    const messagesWithImages = await Promise.all(
+      conversation.messages.map(async (msg) => {
+        let imageUrl = null
+        if (msg.imageOssKey) {
+          try {
+            // 生成预签名URL，有效期1小时
+            imageUrl = ossClient.signatureUrl(msg.imageOssKey, { expires: 3600 })
+          } catch (error) {
+            console.error('生成图片URL失败:', error)
+          }
+        }
+        return {
+          id: msg.id,
+          role: msg.role,
+          content: msg.content,
+          imageUrl,
+          createdAt: msg.createdAt
+        }
+      })
+    )
+
     res.json({
       id: conversation.id,
       userName: conversation.user.profile?.name || conversation.user.email,
@@ -335,52 +549,11 @@ router.get('/conversations/:id', async (req, res) => {
       customInstructions: conversation.customInstructions,
       messageCount: conversation.messages.length,
       createdAt: conversation.createdAt,
-      messages: conversation.messages.map(msg => ({
-        id: msg.id,
-        role: msg.role,
-        content: msg.content,
-        imageUrl: msg.imageOssKey,
-        createdAt: msg.createdAt
-      }))
+      messages: messagesWithImages
     })
   } catch (error) {
     console.error('获取对话详情失败:', error)
     res.status(500).json({ message: '获取对话详情失败' })
-  }
-})
-
-// 导出对话数据
-router.get('/conversations/export', async (req, res) => {
-  try {
-    const conversations = await prisma.conversation.findMany({
-      include: {
-        user: {
-          include: {
-            profile: true
-          }
-        },
-        messages: {
-          select: { id: true }
-        }
-      },
-      orderBy: {
-        createdAt: 'desc'
-      }
-    })
-
-    res.json({
-      data: conversations.map(conv => ({
-        userName: conv.user.profile?.name || conv.user.email,
-        title: conv.title,
-        messageCount: conv.messages.length,
-        hasInstructions: !!conv.customInstructions,
-        hasKnowledgeBase: false,
-        createdAt: conv.createdAt
-      }))
-    })
-  } catch (error) {
-    console.error('导出对话数据失败:', error)
-    res.status(500).json({ message: '导出对话数据失败' })
   }
 })
 
@@ -542,6 +715,97 @@ router.get('/knowledge-base/usage', async (req, res) => {
   } catch (error) {
     console.error('获取知识库使用情况失败:', error)
     res.status(500).json({ message: '获取知识库使用情况失败' })
+  }
+})
+
+// 下载文档
+router.get('/knowledge-base/documents/:id/download', async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const document = await prisma.kbDocument.findUnique({
+      where: { id },
+      select: {
+        ossKey: true,
+        filename: true,
+        fileExt: true
+      }
+    })
+
+    if (!document) {
+      return res.status(404).json({ message: '文档不存在' })
+    }
+
+    if (!document.ossKey) {
+      return res.status(404).json({ message: '文档文件不存在' })
+    }
+
+    // 创建OSS客户端
+    const ossClient = new OSS({
+      region: process.env.OSS_REGION!,
+      accessKeyId: process.env.OSS_ACCESS_KEY_ID!,
+      accessKeySecret: process.env.OSS_ACCESS_KEY_SECRET!,
+      bucket: process.env.OSS_BUCKET!
+    })
+
+    // 生成预签名下载 URL，有效期 1 小时
+    // 注意：OSS不允许覆盖content-type，只设置content-disposition来触发下载
+    const url = ossClient.signatureUrl(document.ossKey, {
+      expires: 3600
+    } as any)
+
+    res.json({ url })
+  } catch (error: any) {
+    console.error('生成下载链接失败:', error)
+    res.status(500).json({ message: '生成下载链接失败', error: error.message })
+  }
+})
+
+// 获取文档详情和内容
+router.get('/knowledge-base/documents/:id', async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const document = await prisma.kbDocument.findUnique({
+      where: { id },
+      include: {
+        user: {
+          include: {
+            profile: true
+          }
+        },
+        category: true,
+        chunks: {
+          orderBy: {
+            seq: 'asc'
+          }
+        }
+      }
+    })
+
+    if (!document) {
+      return res.status(404).json({ message: '文档不存在' })
+    }
+
+    res.json({
+      id: document.id,
+      fileName: document.filename,
+      fileSize: Number(document.fileSize),
+      mimeType: (document as any).mimeType || null,
+      status: document.status,
+      userName: document.user.profile?.name || document.user.email,
+      categoryName: document.category.name,
+      createdAt: document.createdAt,
+      chunks: document.chunks.map(chunk => ({
+        id: chunk.id,
+        index: chunk.seq,
+        content: chunk.content
+      }))
+    })
+  } catch (error: any) {
+    console.error('获取文档详情失败:', error)
+    console.error('错误详情:', error.message, error.stack)
+    res.status(500).json({ message: '获取文档详情失败', error: error.message })
   }
 })
 
