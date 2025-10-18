@@ -409,13 +409,25 @@ router.get('/conversations', async (req, res) => {
       data: conversations.map(conv => {
         // 检查是否有任何消息包含 citations（知识库引用）
         const hasKnowledgeBase = conv.messages.some(msg => {
-          if (!msg.citations) return false
-          try {
-            const citations = typeof msg.citations === 'string' ? JSON.parse(msg.citations) : msg.citations
-            return Array.isArray(citations) && citations.length > 0
-          } catch {
-            return false
+          // null 或 undefined 直接返回 false
+          if (msg.citations === null || msg.citations === undefined) return false
+
+          // 如果是字符串，尝试解析
+          if (typeof msg.citations === 'string') {
+            try {
+              const citations = JSON.parse(msg.citations)
+              return Array.isArray(citations) && citations.length > 0
+            } catch {
+              return false
+            }
           }
+
+          // 如果已经是数组
+          if (Array.isArray(msg.citations)) {
+            return msg.citations.length > 0
+          }
+
+          return false
         })
 
         return {
@@ -462,13 +474,25 @@ router.get('/conversations/export', async (req, res) => {
       data: conversations.map(conv => {
         // 检查是否有任何消息包含 citations（知识库引用）
         const hasKnowledgeBase = conv.messages.some(msg => {
-          if (!msg.citations) return false
-          try {
-            const citations = typeof msg.citations === 'string' ? JSON.parse(msg.citations) : msg.citations
-            return Array.isArray(citations) && citations.length > 0
-          } catch {
-            return false
+          // null 或 undefined 直接返回 false
+          if (msg.citations === null || msg.citations === undefined) return false
+
+          // 如果是字符串，尝试解析
+          if (typeof msg.citations === 'string') {
+            try {
+              const citations = JSON.parse(msg.citations)
+              return Array.isArray(citations) && citations.length > 0
+            } catch {
+              return false
+            }
           }
+
+          // 如果已经是数组
+          if (Array.isArray(msg.citations)) {
+            return msg.citations.length > 0
+          }
+
+          return false
         })
 
         return {
