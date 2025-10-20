@@ -228,7 +228,10 @@
       </div>
 
       <!-- 用户信息弹窗 -->
-      <UserProfile v-if="showUserProfile" @close="showUserProfile = false" />
+      <ProfileModal
+        v-model:visible="showUserProfile"
+        @saved="handleProfileSaved"
+      />
     </div>
     </AppLayout>
   </div>
@@ -238,10 +241,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import AppLayout from '../components/AppLayout.vue'
-import UserProfile from '../components/UserProfile.vue'
+import ProfileModal from '../components/ProfileModal.vue'
 import api from '../api'
+import { useTutorial } from '../composables/useTutorial'
+
+// Tutorial
+const { startKbTutorial } = useTutorial()
 
 // 状态
 const categories = ref([])
@@ -599,6 +606,11 @@ const startChatWithDocument = () => {
   docMenu.value.show = false
 }
 
+// 处理个人资料保存
+const handleProfileSaved = () => {
+  console.log('个人资料已保存')
+}
+
 // 工具函数
 const formatFileSize = (bytes: number) => {
   if (bytes < 1024) return bytes + ' B'
@@ -623,7 +635,7 @@ const getStatusText = (status: string) => {
 }
 
 // 生命周期
-onMounted(() => {
+onMounted(async () => {
   // 检查用户是否登录
   const token = localStorage.getItem('token')
   if (!token) {
@@ -636,7 +648,30 @@ onMounted(() => {
   }
 
   isAuthenticated.value = true
-  loadCategories()
+
+  // 检查是否来自 Chat 页的引导
+  const fromChatTutorial = localStorage.getItem('tutorial_from_chat')
+  if (fromChatTutorial === 'true') {
+    // 清除标志
+    localStorage.removeItem('tutorial_from_chat')
+
+    // 先加载分类数据
+    await loadCategories()
+
+    // 等待 DOM 渲染完成后启动知识库引导
+    // 使用 setTimeout 确保页面和数据都已完全加载
+    nextTick(() => {
+      setTimeout(() => {
+        console.log('知识库页面数据加载完成，启动引导')
+        startKbTutorial(() => {
+          console.log('知识库引导已完成')
+        })
+      }, 800) // 增加延迟到800ms确保所有元素都已渲染和数据加载完成
+    })
+  } else {
+    // 没有引导需求，正常加载分类
+    loadCategories()
+  }
 })
 
 // 清理定时器

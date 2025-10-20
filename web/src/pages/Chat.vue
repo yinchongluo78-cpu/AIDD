@@ -209,7 +209,14 @@
                 placeholder="输入消息，支持 Shift+Enter 换行"
                 rows="1"
               ></textarea>
-              <button class="send-btn" @click="sendMessage" :disabled="!inputMessage.trim()">
+              <!-- 停止生成按钮（生成时显示） -->
+              <button v-if="isGenerating" class="stop-btn" @click="stopGeneration" title="停止生成">
+                <svg viewBox="0 0 24 24" width="20" height="20">
+                  <rect x="6" y="6" width="12" height="12" fill="currentColor"/>
+                </svg>
+              </button>
+              <!-- 发送按钮（未生成时显示） -->
+              <button v-else class="send-btn" @click="sendMessage" :disabled="!inputMessage.trim()" title="发送消息">
                 <svg viewBox="0 0 24 24" width="20" height="20">
                   <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" fill="currentColor"/>
                 </svg>
@@ -391,11 +398,13 @@ console.log('%c🔥 Chat.vue 已加载 - 版本: 2025-10-13-16:38 🔥', 'color:
 console.log('%c文档自动选中功能已修复', 'color: #4ecdc4; font-size: 14px;')
 
 import { ref, computed, onMounted, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import AppLayout from '../components/AppLayout.vue'
 import UserProfile from '../components/UserProfile.vue'
 import ProfileModal from '../components/ProfileModal.vue'
 import KnowledgeSelector from '../components/KnowledgeSelector.vue'
 import api from '../api'
+import { useTutorial } from '../composables/useTutorial'
 import { marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 import hljs from 'highlight.js'
@@ -403,6 +412,10 @@ import 'highlight.js/styles/github-dark.css'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { renderMarkdownToHtml, containsMathFormula } from '../utils/markdown'
+
+// Router 和 Tutorial
+const router = useRouter()
+const { startFullTutorial, startKbTutorial } = useTutorial()
 
 // 状态
 const conversations = ref([])
@@ -431,6 +444,15 @@ const pendingFile = ref(null)
 const selectedDocuments = ref([]) // 知识库选择器选中的文档列表
 const knowledgeSelector = ref(null) // KnowledgeSelector 组件引用
 const imageModalUrl = ref(null) // 图片预览模态框的图片URL
+
+// 回答完成通知相关
+const originalTitle = ref('学习助手')  // 保存原始标题
+let titleFlashTimer = null  // 标题闪烁定时器
+const notificationPermission = ref(Notification.permission)  // 通知权限状态
+
+// 停止生成功能相关
+const abortController = ref(null)  // 用于中止流式请求
+const isGenerating = ref(false)  // 是否正在生成回答
 
 // 自定义指令相关
 const showInstructionsModal = ref(false)
@@ -607,17 +629,21 @@ const sendMessage = async () => {
   scrollToBottom()
 
   // 添加 AI 消息占位
-  const assistantMessage = {
-    id: Date.now() + 1,
+  const assistantMessageId = Date.now() + 1
+  currentMessages.value.push({
+    id: assistantMessageId,
     role: 'assistant',
     content: '',
     createdAt: new Date(),
     isStreaming: true
-  }
-  currentMessages.value.push(assistantMessage)
+  })
   isLoading.value = true
+  isGenerating.value = true  // 标记开始生成
 
   try {
+    // 创建新的 AbortController
+    abortController.value = new AbortController()
+
     const token = localStorage.getItem('token')
     const requestBody = {
       content: userInput,
@@ -633,7 +659,8 @@ const sendMessage = async () => {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
       },
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify(requestBody),
+      signal: abortController.value.signal  // 添加 signal 以支持中止
     })
 
     if (!response.ok) {
@@ -664,37 +691,41 @@ const sendMessage = async () => {
                   // 忽略用户消息确认（已经在前端添加了）
                   console.log('收到用户消息确认')
                 } else if (data.type === 'stream') {
-                  // 流式更新内容，清理HTML标签
+                  // 🔥 流式更新内容 - 直接操作数组元素触发Vue响应式
                   console.log('收到流式内容:', data.content)
-                  const cleanedContent = cleanHtmlTags(data.content)
-                  assistantMessage.content += cleanedContent
-                  // 强制触发Vue响应式更新
-                  const msgIndex = currentMessages.value.findIndex(m => m.id === assistantMessage.id)
+                  const msgIndex = currentMessages.value.findIndex(m => m.id === assistantMessageId)
                   if (msgIndex !== -1) {
-                    currentMessages.value[msgIndex].content = assistantMessage.content
+                    const cleanedContent = cleanHtmlTags(data.content)
+                    // 直接修改数组元素的属性，Vue 3会自动追踪
+                    currentMessages.value[msgIndex].content += cleanedContent
+                    // 立即滚动到底部，让用户看到实时更新
+                    nextTick(() => scrollToBottom())
                   }
-                  scrollToBottom()
                 } else if (data.type === 'done') {
                   console.log('流式传输完成')
-                  // 完成
-                  assistantMessage.isStreaming = false
-                  if (data.data) {
-                    // 不要直接覆盖，保留已经流式显示的内容
-                    assistantMessage.id = data.data.id
-                    assistantMessage.createdAt = data.data.createdAt
-                  }
                   // 更新消息状态
-                  const msgIndex = currentMessages.value.findIndex(m => m.id === assistantMessage.id)
+                  const msgIndex = currentMessages.value.findIndex(m => m.id === assistantMessageId)
                   if (msgIndex !== -1) {
-                    // 流式传输完成，设置为非流式状态，模板会自动调用formatMessage处理数学公式
-                    console.log('流式传输完成，强制更新消息状态')
+                    // 流式传输完成，更新ID和时间戳
+                    if (data.data) {
+                      currentMessages.value[msgIndex].id = data.data.id
+                      currentMessages.value[msgIndex].createdAt = data.data.createdAt
+                    }
+                    // 设置为非流式状态，模板会自动调用formatMessage处理数学公式
                     currentMessages.value[msgIndex].isStreaming = false
-                    
-                    // 强制触发Vue响应式更新，确保数学公式正确渲染
+
+                    // 确保数学公式正确渲染
                     nextTick(() => {
-                      console.log('强制触发Vue响应式更新完成')
+                      console.log('流式传输完成，数学公式渲染')
                       scrollToBottom()
                     })
+
+                    // 触发回答完成通知
+                    notifyResponseComplete()
+
+                    // 重置生成状态
+                    isGenerating.value = false
+                    abortController.value = null
                   }
 
                   // 如果是新对话，更新对话列表
@@ -706,8 +737,11 @@ const sendMessage = async () => {
                     }, 1000)
                   }
                 } else if (data.type === 'error') {
-                  assistantMessage.content = data.message || '抱歉，发生错误。'
-                  assistantMessage.isStreaming = false
+                  const msgIndex = currentMessages.value.findIndex(m => m.id === assistantMessageId)
+                  if (msgIndex !== -1) {
+                    currentMessages.value[msgIndex].content = data.message || '抱歉，发生错误。'
+                    currentMessages.value[msgIndex].isStreaming = false
+                  }
                 }
               } catch (e) {
                 console.error('解析数据错误:', e)
@@ -719,10 +753,22 @@ const sendMessage = async () => {
     }
   } catch (error) {
     console.error('发送消息失败', error)
-    assistantMessage.content = '抱歉，发送消息失败，请稍后重试。'
-    assistantMessage.isStreaming = false
+
+    // 检查是否是用户主动中止
+    if (error.name === 'AbortError') {
+      console.log('请求已被用户中止')
+      // 不显示错误信息，stopGeneration 已经处理了
+    } else {
+      const msgIndex = currentMessages.value.findIndex(m => m.id === assistantMessageId)
+      if (msgIndex !== -1) {
+        currentMessages.value[msgIndex].content = '抱歉，发送消息失败，请稍后重试。'
+        currentMessages.value[msgIndex].isStreaming = false
+      }
+    }
   } finally {
     isLoading.value = false
+    isGenerating.value = false  // 重置生成状态
+    abortController.value = null  // 清除 controller
     scrollToBottom()
   }
 }
@@ -1092,7 +1138,8 @@ const handleImageButtonClick = () => {
 
 const handleImageUpload = async (e: Event) => {
   console.log('文件选择器触发，事件:', e)
-  const file = e.target.files[0]
+  const target = e.target as HTMLInputElement
+  const file = target.files?.[0]
   console.log('选择的文件:', file)
   if (!file) return
 
@@ -1413,6 +1460,88 @@ const scrollToBottom = () => {
   })
 }
 
+// 回答完成通知功能
+const notifyResponseComplete = () => {
+  // 只在页面不可见时触发通知
+  if (!document.hidden) return
+
+  // 1. 浏览器通知
+  if (notificationPermission.value === 'granted') {
+    try {
+      const notification = new Notification('AI 回答完成', {
+        body: '点击查看回答内容',
+        icon: '/favicon.ico',
+        tag: 'ai-response',
+        requireInteraction: false
+      })
+      notification.onclick = () => {
+        window.focus()
+        notification.close()
+      }
+      // 5秒后自动关闭
+      setTimeout(() => notification.close(), 5000)
+    } catch (error) {
+      console.error('发送通知失败:', error)
+    }
+  }
+
+  // 2. 标签页标题闪烁
+  flashPageTitle()
+}
+
+// 标签页标题闪烁
+const flashPageTitle = () => {
+  if (titleFlashTimer) {
+    clearInterval(titleFlashTimer)
+  }
+
+  let count = 0
+  titleFlashTimer = setInterval(() => {
+    document.title = count % 2 === 0 ? '💬 新回答 | 学习助手' : originalTitle.value
+    count++
+    if (count >= 10) {  // 闪烁5次
+      clearInterval(titleFlashTimer)
+      document.title = originalTitle.value
+      titleFlashTimer = null
+    }
+  }, 800)  // 每800ms切换一次
+}
+
+// 停止标题闪烁（用户回到页面时）
+const stopTitleFlash = () => {
+  if (titleFlashTimer) {
+    clearInterval(titleFlashTimer)
+    titleFlashTimer = null
+    document.title = originalTitle.value
+  }
+}
+
+// 请求通知权限
+const requestNotificationPermission = async () => {
+  if ('Notification' in window && Notification.permission === 'default') {
+    const permission = await Notification.requestPermission()
+    notificationPermission.value = permission
+  }
+}
+
+// 停止生成回答
+const stopGeneration = () => {
+  if (abortController.value) {
+    console.log('用户停止生成')
+    abortController.value.abort()
+    abortController.value = null
+    isGenerating.value = false
+    isLoading.value = false
+
+    // 标记当前流式消息为已完成
+    const streamingMsg = currentMessages.value.find(m => m.isStreaming)
+    if (streamingMsg) {
+      streamingMsg.isStreaming = false
+      streamingMsg.content += '\n\n[已停止生成]'
+    }
+  }
+}
+
 // 个人资料保存后的回调
 const onProfileSaved = () => {
   // 强制刷新用户信息
@@ -1497,9 +1626,35 @@ onMounted(async () => {
         alert(`已加载文档：${pendingDoc.name}，请输入消息开始对话`)
       }
     }
+
+    // 启动新手引导
+    await nextTick() // 等待DOM渲染完成
+    await startFullTutorial(
+      // 跳转到知识库的回调
+      () => {
+        // 设置标志，告诉 Kb.vue 继续引导
+        localStorage.setItem('tutorial_from_chat', 'true')
+        // 使用 window.location.href 强制页面刷新，确保 Kb.vue 的 onMounted 被触发
+        window.location.href = '/kb'
+      },
+      // 完成引导的回调
+      () => {
+        console.log('新手引导已完成')
+      }
+    )
   } catch (error) {
     console.error('加载对话历史失败', error)
   }
+
+  // 请求通知权限（首次访问时）
+  requestNotificationPermission()
+
+  // 监听页面可见性变化，停止标题闪烁
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      stopTitleFlash()
+    }
+  })
 })
 
 document.addEventListener('click', () => {
@@ -2379,6 +2534,36 @@ document.addEventListener('click', () => {
   cursor: not-allowed;
 }
 
+/* 停止生成按钮 */
+.stop-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #ff6b6b 0%, #ff8787 100%);
+  border: none;
+  color: #ffffff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.stop-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 5px 15px rgba(255, 107, 107, 0.5);
+}
+
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(255, 107, 107, 0);
+  }
+}
+
 /* 右键菜单 */
 .context-menu {
   position: fixed;
@@ -2679,9 +2864,9 @@ document.addEventListener('click', () => {
 .message-text :deep(h4),
 .message-text :deep(h5),
 .message-text :deep(h6) {
-  margin: 20px 0 12px 0;
+  margin: 24px 0 14px 0;  /* 从20px 0 12px 0提升到24px 0 14px 0，增加标题上下间距 */
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 1.5;  /* 从1.4提升到1.5 */
   color: #ffd700;
   position: relative;
 }
@@ -2708,9 +2893,10 @@ document.addEventListener('click', () => {
 }
 
 .message-text :deep(p) {
-  margin: 12px 0;
-  line-height: 1.7;
+  margin: 16px 0;  /* 从12px提升到16px，增加段落间距 */
+  line-height: 1.8;  /* 从1.7提升到1.8，提高可读性 */
   color: rgba(255, 255, 255, 0.9);
+  letter-spacing: 0.3px;  /* 新增字间距，提升阅读舒适度 */
 }
 
 .message-text :deep(strong) {
@@ -2786,9 +2972,9 @@ document.addEventListener('click', () => {
 
 .message-text :deep(ul li) {
   position: relative;
-  margin: 8px 0;
+  margin: 10px 0;  /* 从8px提升到10px，增加列表项间距 */
   padding-left: 24px;
-  line-height: 1.7;
+  line-height: 1.8;  /* 从1.7提升到1.8 */
 }
 
 .message-text :deep(ul li):before {
@@ -2808,9 +2994,9 @@ document.addEventListener('click', () => {
 
 .message-text :deep(ol li) {
   position: relative;
-  margin: 8px 0;
+  margin: 10px 0;  /* 从8px提升到10px，增加列表项间距 */
   padding-left: 32px;
-  line-height: 1.7;
+  line-height: 1.8;  /* 从1.7提升到1.8 */
   counter-increment: list-counter;
 }
 
@@ -3022,12 +3208,13 @@ document.addEventListener('click', () => {
 /* 分数样式优化 - 防止遮盖下一行文字 */
 .message-text :deep(.katex .mfrac) {
   margin: 0 3px;
-  vertical-align: baseline;
+  vertical-align: middle !important;
   display: inline-block;
   position: relative;
   line-height: 1;
   max-height: 2.5em;
   overflow: visible;
+  transform: translateY(-0.7em) !important;
 }
 
 .message-text :deep(.katex .frac-line) {
@@ -3083,7 +3270,6 @@ document.addEventListener('click', () => {
 
 /* 行内分数特殊处理 */
 .message-text :deep(.katex-html .mfrac) {
-  transform: translateY(-0.1em);
   max-height: 2em;
 }
 
@@ -3147,6 +3333,15 @@ document.addEventListener('click', () => {
 .message-text :deep(.katex .mathrm) {
   font-weight: 500;
   letter-spacing: 0.01em;
+}
+
+/* 全局KaTeX分数居中修复 - 最高优先级 */
+:deep(.katex .mfrac) {
+  vertical-align: 0.35em !important;
+}
+
+:deep(.katex-html .mfrac) {
+  vertical-align: 0.35em !important;
 }
 
 /* 代码高亮主题调整 */

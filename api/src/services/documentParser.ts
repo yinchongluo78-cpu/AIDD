@@ -186,6 +186,13 @@ export async function parseAndStoreDocument(documentId: string, documentUrl: str
       return 0
     }
 
+    // 删除该文档的旧切片（如果存在）
+    console.log(`检查并删除文档的旧切片...`)
+    const deleteResult = await prisma.kbChunk.deleteMany({
+      where: { docId: documentId }
+    })
+    console.log(`已删除 ${deleteResult.count} 个旧切片`)
+
     // 批量存储切片到数据库（分批处理，避免内存溢出）
     console.log(`开始存储切片到数据库，文档ID: ${documentId}`)
     try {
@@ -246,8 +253,95 @@ function cleanContent(content: string): string {
   // 移除多余的换行(保留单换行和双换行)
   content = content.replace(/\n{3,}/g, '\n\n')
 
-  // 只移除行首行尾的空白,不处理中间的空白(避免大文本性能问题)
-  content = content.split('\n').map(line => line.trim()).join('\n')
+  // 🔥 新增：修复碎片化的行（每个字符一行的问题）
+  // 将内容按行分割
+  const lines = content.split('\n').map(line => line.trim()).filter(line => line.length > 0)
+
+  // 合并碎片化的行
+  const mergedLines: string[] = []
+  let currentLine = ''
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+
+    // 如果当前行只有1-2个字符，并且不是句子结束符，可能是碎片
+    if (line.length <= 2 && !line.match(/[。！？.!?]$/)) {
+      currentLine += line
+      continue
+    }
+
+    // 如果当前行很短（<5个字符）且没有句子结束符，可能需要合并到下一行
+    if (line.length < 5 && !line.match(/[。！？.!?]$/)) {
+      currentLine += line
+      continue
+    }
+
+    // 如果前一行没有句子结束符，并且当前行也很短，合并
+    if (currentLine && !currentLine.match(/[。！？.!?]$/) && line.length < 20) {
+      currentLine += line
+      continue
+    }
+
+    // 如果前一行没有句子结束符，但当前行是新段落的开始（数字、标题等），先保存前一行
+    if (currentLine && line.match(/^[\d一二三四五六七八九十]+[、.）)]/)) {
+      if (currentLine.trim()) mergedLines.push(currentLine.trim())
+      currentLine = line
+      continue
+    }
+
+    // 正常行：保存之前累积的内容，开始新行
+    if (currentLine) {
+      mergedLines.push(currentLine.trim())
+      currentLine = ''
+    }
+
+    currentLine = line
+  }
+
+  // 保存最后累积的内容
+  if (currentLine.trim()) {
+    mergedLines.push(currentLine.trim())
+  }
+
+  // 🔥 新增：智能段落合并
+  // 如果连续多行都没有句子结束符，可能需要合并成一个段落
+  const paragraphs: string[] = []
+  let currentParagraph = ''
+
+  for (let i = 0; i < mergedLines.length; i++) {
+    const line = mergedLines[i]
+
+    // 如果是章节标题、列表项等，作为独立段落
+    if (line.match(/^(第[一二三四五六七八九十\d]+[章节课单元]|[\d一二三四五六七八九十]+[、.）)]|\d+\.\s)/)) {
+      if (currentParagraph) {
+        paragraphs.push(currentParagraph.trim())
+        currentParagraph = ''
+      }
+      paragraphs.push(line)
+      continue
+    }
+
+    // 累积到当前段落
+    if (currentParagraph) {
+      currentParagraph += line
+    } else {
+      currentParagraph = line
+    }
+
+    // 如果当前行以句子结束符结尾，结束当前段落
+    if (line.match(/[。！？.!?]$/)) {
+      paragraphs.push(currentParagraph.trim())
+      currentParagraph = ''
+    }
+  }
+
+  // 保存最后的段落
+  if (currentParagraph.trim()) {
+    paragraphs.push(currentParagraph.trim())
+  }
+
+  // 用双换行符连接段落
+  content = paragraphs.join('\n\n')
 
   return content.trim()
 }
@@ -378,13 +472,20 @@ export async function searchDocumentChunks(
   categoryId?: string,
   userId?: string,
   limit: number = 5,
-  documentIds?: string[]
+  documentIds?: string[],
+  useStructuredRetrieval: boolean = false // 新增：是否使用结构化检索（按顺序返回）
 ): Promise<Array<{chunk: any, document: any, score: number}>> {
   try {
     console.log('=== 知识库检索 ===')
     console.log('查询:', query)
     console.log('分类ID:', categoryId || '无')
-    console.log('文档IDs:', documentIds?.length || 0)
+    console.log('用户ID:', userId || '无')
+    console.log('指定文档IDs:', documentIds || '无')
+    console.log('指定文档数量:', documentIds?.length || 0)
+    console.log('使用结构化检索:', useStructuredRetrieval ? '是' : '否')
+
+    // 🔥 核心修复：当用户明确选择了文档时，直接返回这些文档的内容，不依赖关键词匹配
+    const isExplicitDocumentSelection = documentIds && documentIds.length > 0
 
     // 构建查询条件
     const whereClause: any = {}
@@ -401,30 +502,39 @@ export async function searchDocumentChunks(
         whereClause.document.id = {
           in: documentIds
         }
+        console.log('🎯 用户明确选择了文档，将返回这些文档的所有切片')
       }
-      // 查询已经解析完成的文档（兼容 uploaded 和 ready 状态）
-      // 旧版本文档使用 'uploaded' 状态但已有切片，新版本使用 'ready' 状态
-      whereClause.document.status = {
-        in: ['ready', 'uploaded']
+
+      // 🔥 修复：当用户明确选择文档时，不限制文档状态
+      // 这样即使文档还在解析中（pending），也能告知用户"文档正在解析"
+      if (!isExplicitDocumentSelection) {
+        // 只有在搜索模式下才限制文档状态
+        whereClause.document.status = {
+          in: ['ready', 'uploaded']
+        }
       }
     }
 
     // 提取关键词
     const keywords = tokenize(query)
-    console.log('提取关键词:', keywords)
+    console.log('提取关键词:', keywords.slice(0, 10), keywords.length > 10 ? `... (共${keywords.length}个)` : '')
 
-    // 如果有关键词，添加内容匹配条件
-    // 但如果用户明确指定了documentIds，即使没有关键词匹配也要返回文档内容
-    if (keywords.length > 0 && !documentIds) {
-      // 普通搜索：必须匹配关键词
+    // 🔥 修复：根据检索模式决定是否使用关键词过滤
+    if (useStructuredRetrieval) {
+      // 结构化检索模式：不使用关键词过滤，按顺序返回所有切片
+      console.log('📋 结构化检索模式：按顺序返回文档切片，不使用关键词过滤')
+    } else if (keywords.length > 0 && !isExplicitDocumentSelection) {
+      // 普通搜索模式：必须匹配关键词
       whereClause.OR = keywords.map(keyword => ({
         content: {
           contains: keyword,
           mode: 'insensitive'
         }
       }))
+      console.log('📝 搜索模式：使用关键词过滤')
+    } else if (isExplicitDocumentSelection) {
+      console.log('📌 精确文档模式：不使用关键词过滤，返回指定文档的所有切片')
     }
-    // 如果指定了documentIds，不添加关键词限制，返回文档的所有切片
 
     // 获取所有匹配的切片
     const chunks = await prisma.kbChunk.findMany({
@@ -432,30 +542,78 @@ export async function searchDocumentChunks(
       include: {
         document: true
       },
-      take: documentIds && documentIds.length > 0 ? limit * 10 : limit * 3, // 指定文档时取更多切片
+      // 🔥 修复：指定文档时返回更多切片，确保有足够的上下文
+      take: isExplicitDocumentSelection ? limit * 10 : limit * 3,
+      // 按切片顺序返回（保持文档原始顺序）
+      orderBy: {
+        seq: 'asc'
+      }
     })
 
-    console.log(`找到 ${chunks.length} 个初步匹配的切片`)
+    console.log(`✅ 找到 ${chunks.length} 个切片`)
 
-    // 计算相关性分数并排序
-    const rankedChunks = chunks
-      .map(chunk => ({
-        chunk,
-        document: chunk.document,
-        score: calculateRelevanceScore(query, chunk.content)
-      }))
-      .sort((a, b) => b.score - a.score) // 按分数降序
-      .slice(0, limit) // 取top N
+    // 如果指定了文档但没有找到切片，记录详细信息
+    if (isExplicitDocumentSelection && chunks.length === 0) {
+      console.error('⚠️ 警告：用户选择了文档，但没有找到任何切片')
+      console.error('可能原因：')
+      console.error('1. 文档还未解析完成（status 不是 ready/uploaded）')
+      console.error('2. 文档解析失败，没有生成切片')
+      console.error('3. documentIds 不正确')
 
-    console.log('最终返回切片数:', rankedChunks.length)
+      // 检查文档状态
+      const docs = await prisma.kbDocument.findMany({
+        where: {
+          id: { in: documentIds }
+        },
+        select: {
+          id: true,
+          filename: true,
+          status: true,
+          _count: {
+            select: { chunks: true }
+          }
+        }
+      })
+      console.error('文档详情:', docs.map(d => ({
+        id: d.id,
+        filename: d.filename,
+        status: d.status,
+        chunksCount: d._count.chunks
+      })))
+    }
+
+    // 🔥 修复：改进相关性评分逻辑
+    let rankedChunks = chunks.map(chunk => ({
+      chunk,
+      document: chunk.document,
+      score: (isExplicitDocumentSelection || useStructuredRetrieval)
+        ? 1.0  // 明确选择的文档或结构化检索，所有切片都是高相关的
+        : calculateRelevanceScore(query, chunk.content)  // 搜索模式才计算相关性
+    }))
+
+    // 排序和截取
+    if (!isExplicitDocumentSelection && !useStructuredRetrieval) {
+      // 搜索模式：按相关性评分排序
+      rankedChunks = rankedChunks
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit)
+    } else {
+      // 精确文档模式或结构化检索：保持文档原始顺序（已经按 chunkIndex 排序），取前N个
+      rankedChunks = rankedChunks.slice(0, limit)
+    }
+
+    console.log('📊 最终返回切片数:', rankedChunks.length)
     if (rankedChunks.length > 0) {
-      console.log('最高分数:', rankedChunks[0].score)
-      console.log('最高分切片预览:', rankedChunks[0].chunk.content.substring(0, 100))
+      console.log('📄 返回的文档:', [...new Set(rankedChunks.map(r => r.document.filename))].join(', '))
+      console.log('📝 第一个切片预览:', rankedChunks[0].chunk.content.substring(0, 100) + '...')
+      if (!isExplicitDocumentSelection) {
+        console.log('⭐ 最高相关性分数:', rankedChunks[0].score)
+      }
     }
 
     return rankedChunks
   } catch (error) {
-    console.error('搜索文档切片失败:', error)
+    console.error('❌ 搜索文档切片失败:', error)
     return []
   }
 }

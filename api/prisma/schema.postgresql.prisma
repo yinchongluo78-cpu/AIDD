@@ -11,24 +11,28 @@ model User {
   id           String      @id @default(uuid()) @db.Uuid
   email        String      @unique
   passwordHash String      @map("password_hash")
+  role         String      @default("user")
   createdAt    DateTime    @default(now()) @map("created_at")
 
   profile       Profile?
   categories    KbCategory[]
   documents     KbDocument[]
   conversations Conversation[]
+  sessions      UserSession[]
 
   @@map("users")
 }
 
 model Profile {
-  userId    String   @id @db.Uuid @map("user_id")
-  name      String?
-  age       Int?
-  grade     String?
-  phone     String?
-  avatarUrl String?  @map("avatar_url")
-  updatedAt DateTime @default(now()) @map("updated_at")
+  userId               String   @id @db.Uuid @map("user_id")
+  name                 String?
+  age                  Int?
+  grade                String?
+  phone                String?
+  avatarUrl            String?  @map("avatar_url")
+  hasCompletedTutorial Boolean  @default(false) @map("has_completed_tutorial")
+  tutorialStep         Int      @default(0) @map("tutorial_step")
+  updatedAt            DateTime @default(now()) @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -108,4 +112,17 @@ model Message {
 
   @@map("messages")
   @@index([conversationId, createdAt])
+}
+
+model UserSession {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid @map("user_id")
+  startTime DateTime @default(now()) @map("start_time")
+  endTime   DateTime? @map("end_time")
+  duration  Int      @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_sessions")
+  @@index([userId, startTime])
 }

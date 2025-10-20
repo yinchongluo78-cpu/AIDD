@@ -33,7 +33,9 @@ router.get('/profile', authenticateToken, async (req: AuthRequest, res) => {
         age: profile.age,
         grade: profile.grade,
         phone: profile.phone,
-        avatar: profile.avatarUrl
+        avatar: profile.avatarUrl,
+        hasCompletedTutorial: profile.hasCompletedTutorial || false,
+        tutorialStep: profile.tutorialStep || 0
       })
     } else {
       res.json({
@@ -42,7 +44,9 @@ router.get('/profile', authenticateToken, async (req: AuthRequest, res) => {
         age: user.profile.age,
         grade: user.profile.grade,
         phone: user.profile.phone,
-        avatar: user.profile.avatarUrl
+        avatar: user.profile.avatarUrl,
+        hasCompletedTutorial: user.profile.hasCompletedTutorial || false,
+        tutorialStep: user.profile.tutorialStep || 0
       })
     }
   } catch (error) {
@@ -64,6 +68,33 @@ router.put('/profile', authenticateToken, async (req: AuthRequest, res) => {
         phone,
         avatarUrl: avatar
       }
+    })
+
+    res.json(profile)
+  } catch (error) {
+    console.error('更新用户信息错误:', error)
+    res.status(500).json({ message: '更新用户信息失败' })
+  }
+})
+
+// PATCH /profile - 部分更新用户信息（包括引导状态）
+router.patch('/profile', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    const { name, age, grade, phone, avatar, hasCompletedTutorial, tutorialStep } = req.body
+
+    // 构建更新数据对象，只包含提供的字段
+    const updateData: any = {}
+    if (name !== undefined) updateData.name = name
+    if (age !== undefined) updateData.age = age
+    if (grade !== undefined) updateData.grade = grade
+    if (phone !== undefined) updateData.phone = phone
+    if (avatar !== undefined) updateData.avatarUrl = avatar
+    if (hasCompletedTutorial !== undefined) updateData.hasCompletedTutorial = hasCompletedTutorial
+    if (tutorialStep !== undefined) updateData.tutorialStep = tutorialStep
+
+    const profile = await prisma.profile.update({
+      where: { userId: req.userId },
+      data: updateData
     })
 
     res.json(profile)

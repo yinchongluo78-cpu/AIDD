@@ -157,10 +157,19 @@
 
         <!-- 弹窗底部 -->
         <div class="modal-footer">
-          <button class="btn-cancel" @click="handleClose">取消</button>
-          <button class="btn-save" @click="handleSave" :disabled="saving">
-            {{ saving ? '保存中...' : '保存' }}
+          <button class="btn-tutorial" @click="handleRestartTutorial">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M12 16v-4M12 8h.01"/>
+            </svg>
+            重新查看引导
           </button>
+          <div class="footer-right">
+            <button class="btn-cancel" @click="handleClose">取消</button>
+            <button class="btn-save" @click="handleSave" :disabled="saving">
+              {{ saving ? '保存中...' : '保存' }}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -169,7 +178,12 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import api from '../api'
+import { useTutorial } from '../composables/useTutorial'
+
+const router = useRouter()
+const { restartTutorial } = useTutorial()
 
 const props = defineProps<{
   visible: boolean
@@ -296,6 +310,27 @@ const handleSave = async () => {
   } finally {
     saving.value = false
   }
+}
+
+// 重新查看引导
+const handleRestartTutorial = () => {
+  // 关闭弹窗
+  handleClose()
+
+  // 跳转到对话页（如果当前不在对话页）
+  if (router.currentRoute.value.path !== '/chat') {
+    router.push('/chat')
+  }
+
+  // 延迟启动引导，确保页面已经加载
+  setTimeout(() => {
+    restartTutorial('chat', {
+      onNavigateToKb: () => {
+        localStorage.setItem('tutorial_from_chat', 'true')
+        router.push('/kb')
+      }
+    })
+  }, 300)
 }
 </script>
 
@@ -534,11 +569,17 @@ const handleSave = async () => {
 
 .modal-footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   gap: 12px;
   padding: 20px 24px;
   border-top: 1px solid rgba(255, 215, 0, 0.1);
   background: rgba(0, 0, 0, 0.2);
+}
+
+.footer-right {
+  display: flex;
+  gap: 12px;
 }
 
 .btn-cancel,
@@ -577,6 +618,31 @@ const handleSave = async () => {
 .btn-save:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.btn-tutorial {
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid rgba(255, 215, 0, 0.3);
+  background: rgba(255, 215, 0, 0.1);
+  color: #ffd700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-tutorial:hover {
+  background: rgba(255, 215, 0, 0.2);
+  border-color: rgba(255, 215, 0, 0.5);
+  transform: translateY(-1px);
+}
+
+.btn-tutorial svg {
+  flex-shrink: 0;
 }
 
 /* 移动端适配 */

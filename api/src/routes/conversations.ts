@@ -187,45 +187,146 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
       console.log('=== 开始知识库检索 ===')
       console.log('categoryId:', categoryId)
       console.log('documentIds:', documentIds)
+      console.log('documentIds数量:', documentIds?.length || 0)
       console.log('content:', content || '(无用户输入文字)')
 
-      // 如果用户没有输入文字，使用默认查询
-      const searchQuery = content || '请总结文档的主要内容'
+      // 🔥 新增：智能查询优化 - 检测模糊查询意图
+      let searchQuery = content || '请总结文档的主要内容'
+      let useStructuredRetrieval = false // 是否使用结构化检索（按顺序取切片）
+
+      // 检测用户是否要求"总结文档"或"前N个单元/章节"
+      const summaryPattern = /(总结|概括|介绍|讲[一下解])(这个)?文档|前\s*\d+\s*(个)?(单元|章节|部分)/
+      const chapterPattern = /第?\s*(\d+|[一二三四五六七八九十]+)\s*(个)?\s*(单元|章节|课|部分)/
+
+      if (content) {
+        if (summaryPattern.test(content)) {
+          console.log('🎯 检测到总结/概括类查询')
+          useStructuredRetrieval = true
+        }
+
+        // 提取具体的单元/章节编号
+        const chapterMatch = content.match(chapterPattern)
+        if (chapterMatch) {
+          console.log('🎯 检测到具体章节查询:', chapterMatch[0])
+          // 将中文数字转换为阿拉伯数字
+          const chapterNum = chapterMatch[1]
+          searchQuery = `第${chapterNum}单元 第${chapterNum}章 第${chapterNum}课 ${chapterNum}`
+          console.log('优化后的搜索查询:', searchQuery)
+        }
+
+        // 如果查询非常模糊（太短且没有实质内容），使用结构化检索
+        if (content.length < 15 && summaryPattern.test(content)) {
+          console.log('⚠️ 查询过于模糊，将使用结构化检索（按顺序返回切片）')
+          useStructuredRetrieval = true
+        }
+      }
 
       const relevantChunks = await searchDocumentChunks(
         searchQuery,
         categoryId,
         req.userId,
-        5, // 最多返回5个相关片段
-        documentIds // 支持精确指定文档ID
+        useStructuredRetrieval ? 15 : 8, // 结构化检索时返回更多切片以覆盖文档开头部分
+        documentIds, // 支持精确指定文档ID
+        useStructuredRetrieval // 传递结构化检索标志
       )
 
       if (relevantChunks.length > 0) {
         console.log(`✅ 找到 ${relevantChunks.length} 个相关文档片段`)
 
+        // 🔥 修复：根据是否明确选择文档，使用不同的提示词策略
+        const isExplicitSelection = documentIds && documentIds.length > 0
+
         // 构建知识库上下文
         kbContext = '\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-        kbContext += '⚠️  【备用资料库 - 仅在明确要求时使用】 ⚠️\n'
-        kbContext += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'
-        kbContext += '🚨 重要警告：\n'
-        kbContext += '以下内容是用户上传的学习资料，仅供需要时参考。\n'
-        kbContext += '❌ 如果正在答题/练习/测验，请完全忽略这些内容！\n'
-        kbContext += '❌ 不要看到关键词就自动开始讲解！\n'
-        kbContext += '✅ 只有用户明确说"讲一下XXX"时，才使用这些资料。\n\n'
+
+        if (isExplicitSelection) {
+          // 用户明确选择了文档，应该直接使用这些内容
+          kbContext += '📚  【用户选择的学习资料】 📚\n'
+          kbContext += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'
+          kbContext += '✅ 用户已明确选择以下文档作为学习资料：\n'
+          kbContext += '请根据用户的问题和对话历史，判断是回答题目还是讲解知识点。\n'
+          kbContext += '- 如果用户在答题/练习，请优先根据对话上下文批改，谨慎使用资料\n'
+          kbContext += '- 如果用户要求"总结"、"讲一下"、"介绍"等，请充分使用以下资料\n\n'
+        } else {
+          // 搜索模式，谨慎使用
+          kbContext += '⚠️  【备用资料库 - 仅在明确要求时使用】 ⚠️\n'
+          kbContext += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'
+          kbContext += '🚨 重要警告：\n'
+          kbContext += '以下内容是用户上传的学习资料，仅供需要时参考。\n'
+          kbContext += '❌ 如果正在答题/练习/测验，请完全忽略这些内容！\n'
+          kbContext += '❌ 不要看到关键词就自动开始讲解！\n'
+          kbContext += '✅ 只有用户明确说"讲一下XXX"时，才使用这些资料。\n\n'
+        }
 
         relevantChunks.forEach((item, index) => {
-          kbContext += `【备用资料 ${index + 1}/${relevantChunks.length}：${item.document.filename}】\n`
+          kbContext += `【资料 ${index + 1}/${relevantChunks.length}：${item.document.filename}】\n`
           kbContext += item.chunk.content + '\n\n'
 
-          // 记录引用信息
-          citations.push(`${item.document.filename} - 片段${index + 1}`)
+          // 🔥 修复：记录引用信息，确保不重复
+          const citationText = `${item.document.filename} - 片段${index + 1}`
+          if (!citations.includes(citationText)) {
+            citations.push(citationText)
+          }
         })
         kbContext += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-        kbContext += '⚠️  备用资料结束 - 请根据对话上下文判断是否使用  ⚠️\n'
+
+        if (isExplicitSelection) {
+          kbContext += '✅  用户选择的资料结束 - 请根据需要使用以上内容  ✅\n'
+        } else {
+          kbContext += '⚠️  备用资料结束 - 请根据对话上下文判断是否使用  ⚠️\n'
+        }
         kbContext += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+
+        console.log(`📌 记录了 ${citations.length} 条引用信息`)
       } else {
         console.log('❌ 未找到相关文档片段')
-        console.log('可能原因：1) 文档未解析 2) 文档没有内容 3) 查询关键词不匹配')
+
+        // 🔥 改进：如果用户明确选择了文档但没找到切片，给出详细提示
+        if (documentIds && documentIds.length > 0) {
+          console.error('⚠️ 严重问题：用户选择了文档，但没有检索到任何内容！')
+
+          // 检查文档状态，提供更准确的提示
+          const docs = await prisma.kbDocument.findMany({
+            where: { id: { in: documentIds } },
+            select: {
+              id: true,
+              filename: true,
+              status: true,
+              _count: { select: { chunks: true } }
+            }
+          })
+
+          console.log('文档状态检查:', docs.map(d => ({
+            filename: d.filename,
+            status: d.status,
+            chunks: d._count.chunks
+          })))
+
+          const allDocsPending = docs.every(d => d.status === 'pending')
+          const hasEmptyDocs = docs.some(d => d._count.chunks === 0)
+
+          if (allDocsPending) {
+            // 所有文档都在解析中
+            kbContext = '\n\n⚠️ 【重要提示】用户选择的文档正在后台解析中，预计需要1-2分钟。\n'
+            kbContext += '请友好地告知用户："您选择的文档正在处理中，请稍等片刻后刷新页面重试。"\n'
+            kbContext += '❌ 不要编造任何内容，不要猜测文档内容。\n\n'
+            citations.push('[文档解析中]')
+          } else if (hasEmptyDocs) {
+            // 部分文档解析失败或为空
+            kbContext = '\n\n⚠️ 【重要提示】用户选择的文档可能解析失败或为空。\n'
+            kbContext += '请友好地告知用户："抱歉，所选文档似乎解析失败或没有可用内容，请尝试重新上传文档。"\n'
+            kbContext += '❌ 不要编造任何内容。\n\n'
+            citations.push('[文档解析失败]')
+          } else {
+            // 文档已就绪但关键词不匹配
+            kbContext = '\n\n⚠️ 【重要提示】用户选择了文档，但您的问题可能过于模糊，系统无法找到相关内容。\n'
+            kbContext += '请友好地询问用户："您想了解文档中的哪个具体章节或知识点呢？请提供更详细的问题，比如\'第1单元\'或\'二次根式的概念\'。"\n'
+            kbContext += '❌ 不要编造文档内容，不要猜测。\n\n'
+            citations.push('[检索失败-需明确问题]')
+          }
+        } else {
+          console.log('可能原因：1) 文档未解析 2) 文档没有内容 3) 查询关键词不匹配')
+        }
       }
     }
 
@@ -267,7 +368,7 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
     }
 
     // 使用自定义指令或默认系统消息
-    const defaultSystemMessage = `你是AI学习助手，用中文自然地与用户对话。
+    const defaultSystemMessage = `你是AI学习助手，专门辅导中国8-15岁学生的学习问题，用中文自然地与用户对话。
 
 【核心原则：对话连贯性 + 自然交流】
 
@@ -290,6 +391,19 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
 3️⃣ 知识库使用：
    - 下方如果有【备用资料库】内容，只在用户明确要学习时使用
    - 答题/测验时完全忽略知识库内容
+
+4️⃣ **数学公式输出规范（非常重要）：**
+   - 数学公式统一用 LaTeX 格式：行内公式 $...$，独立公式 $$...$$
+   - 示例：$E=mc^2$、$$x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}$$
+   - 化学式用 LaTeX：$\\ce{H2O}$、$\\ce{CO2}$
+   - 如果知识点涉及多个公式或情景，必须全部列出，不要遗漏
+   - 突出 **易错点** 和 **注意事项**
+
+5️⃣ **知识库内容使用要求：**
+   - 如果下方提供了【备用资料库】内容，且用户明确要求学习某知识点
+   - 必须**综合所有资料片段**回答，不要只用前1-2个片段
+   - 如果某知识点有多个公式/定理/例题，必须全部包含
+   - 示例：如果资料中有5条公式，回答时要列出所有5条，而不是只说2条
 
 ---
 
