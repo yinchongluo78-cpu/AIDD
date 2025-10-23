@@ -35,7 +35,23 @@
       <div class="kb-main">
         <div class="content-header">
           <h2 class="content-title">{{ currentCategory?.name || '请选择分类' }}</h2>
-          <div class="header-actions" v-if="selectedCategoryId">
+          <div class="header-actions" v-if="selectedCategoryId" style="display: flex; align-items: center; gap: 0;">
+            <!-- PDF处理速度提示图标 -->
+            <div class="upload-tip-wrapper">
+              <div class="upload-tip-icon">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                  <path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
+                </svg>
+              </div>
+              <div class="upload-tip-popup">
+                <div class="tip-popup-title">⚡ 上传提示</div>
+                <div class="tip-popup-content">
+                  <div class="tip-highlight">文字版比图片版快40倍！</div>
+                  <div class="tip-comparison">· 10页：5秒 vs 3分钟</div>
+                  <div class="tip-suggestion">建议：图片版PDF请先OCR处理后上传</div>
+                </div>
+              </div>
+            </div>
             <button class="upload-btn" @click="$refs.fileInput.click()">
               <svg class="icon" viewBox="0 0 24 24" width="18" height="18">
                 <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" fill="currentColor"/>
@@ -75,6 +91,19 @@
               <p class="doc-meta">
                 {{ formatFileSize(doc.fileSize || doc.size) }} · {{ formatDate(doc.createdAt) }}
               </p>
+              <!-- 🔥 新增：OCR处理进度显示 -->
+              <div v-if="doc.status === 'processing' && documentProgresses.get(doc.id)" class="doc-progress">
+                <div class="progress-text">
+                  已完成 {{ documentProgresses.get(doc.id)?.current || 0 }}/{{ documentProgresses.get(doc.id)?.total || 0 }} 页
+                  ({{ documentProgresses.get(doc.id)?.percentage || 0 }}%)
+                </div>
+                <div class="progress-bar-mini">
+                  <div
+                    class="progress-fill-mini"
+                    :style="{ width: (documentProgresses.get(doc.id)?.percentage || 0) + '%' }"
+                  ></div>
+                </div>
+              </div>
               <div class="doc-status" :class="doc.status">
                 {{ getStatusText(doc.status) }}
               </div>
@@ -250,6 +279,40 @@ import { useTutorial } from '../composables/useTutorial'
 // Tutorial
 const { startKbTutorial } = useTutorial()
 
+// 🔥 新增：PDF页数检查函数（使用pdf-parse库）
+const checkPdfPageCount = async (file: File): Promise<number> => {
+  return new Promise(async (resolve, reject) => {
+    try {
+      // 动态导入 pdf-parse (仅在需要时加载)
+      const pdfjsLib = await import('pdfjs-dist')
+
+      // 配置 worker
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`
+
+      const arrayBuffer = await file.arrayBuffer()
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+
+      resolve(pdf.numPages)
+    } catch (error) {
+      console.error('PDF页数检查失败:', error)
+      reject(error)
+    }
+  })
+}
+
+// 🔥 新增：文档处理进度状态
+interface DocumentProgress {
+  id: string
+  filename: string
+  status: string
+  current: number
+  total: number
+  percentage: number
+}
+
+const documentProgresses = ref<Map<string, DocumentProgress>>(new Map())
+const progressCheckInterval = ref<number | null>(null)
+
 // 状态
 const categories = ref([])
 const selectedCategoryId = ref(null)
@@ -346,20 +409,49 @@ const selectCategory = async (categoryId: string) => {
   }
 }
 
-// 检查是否有pending状态的文档，如果有则开始轮询
+// 🔥 修改：检查是否有pending或processing状态的文档，如果有则开始轮询
 const checkAndStartStatusPolling = () => {
-  const hasPendingDocs = documents.value.some(doc => doc.status === 'pending')
+  const hasPendingDocs = documents.value.some(doc => doc.status === 'pending' || doc.status === 'processing')
 
   if (hasPendingDocs && !statusCheckInterval.value) {
-    // 每5秒检查一次
-    statusCheckInterval.value = window.setInterval(refreshDocumentStatus, 5000)
-    console.log('开始轮询文档状态（有pending文档）')
+    // 每3秒检查一次（加快刷新频率以获得更流畅的进度更新）
+    statusCheckInterval.value = window.setInterval(refreshDocumentStatus, 3000)
+    console.log('开始轮询文档状态（有pending/processing文档）')
+
+    // 立即查询一次进度
+    checkProcessingDocumentsProgress()
   } else if (!hasPendingDocs && statusCheckInterval.value) {
-    // 如果没有pending文档了，停止轮询
+    // 如果没有pending/processing文档了，停止轮询
     window.clearInterval(statusCheckInterval.value)
     statusCheckInterval.value = null
-    console.log('停止轮询文档状态（无pending文档）')
+    console.log('停止轮询文档状态（无pending/processing文档）')
+
+    // 清空进度信息
+    documentProgresses.value.clear()
   }
+}
+
+// 🔥 新增：查询processing状态文档的处理进度
+const checkProcessingDocumentsProgress = async () => {
+  const processingDocs = documents.value.filter(doc => doc.status === 'processing')
+
+  if (processingDocs.length === 0) {
+    return
+  }
+
+  // 并行查询所有processing文档的进度
+  const progressPromises = processingDocs.map(async (doc) => {
+    try {
+      const progress = await api.get(`/api/kb/documents/${doc.id}/progress`)
+      documentProgresses.value.set(doc.id, progress.data)
+
+      console.log(`文档"${doc.filename}"处理进度: ${progress.data.current}/${progress.data.total} (${progress.data.percentage}%)`)
+    } catch (error) {
+      console.error(`查询文档"${doc.filename}"进度失败:`, error)
+    }
+  })
+
+  await Promise.all(progressPromises)
 }
 
 // 刷新当前分类的文档状态
@@ -378,9 +470,16 @@ const refreshDocumentStatus = async () => {
         hasChanges = true
         console.log(`文档"${doc.filename}"状态更新: ${doc.status} -> ${newDoc.status}`)
 
-        // 如果状态变为ready，显示成功消息
-        if (newDoc.status === 'ready' && doc.status === 'pending') {
+        // 如果状态变为ready，显示成功消息并清除进度
+        if (newDoc.status === 'ready' && (doc.status === 'pending' || doc.status === 'processing')) {
           showMessage('success', `文档"${doc.filename}"解析完成！`)
+          documentProgresses.value.delete(doc.id)
+        }
+
+        // 如果状态变为failed，显示错误消息并清除进度
+        if (newDoc.status === 'failed') {
+          showMessage('error', `文档"${doc.filename}"解析失败`)
+          documentProgresses.value.delete(doc.id)
         }
 
         return newDoc
@@ -388,7 +487,10 @@ const refreshDocumentStatus = async () => {
       return doc
     })
 
-    // 检查是否还有pending的文档
+    // 🔥 新增：刷新processing文档的进度
+    await checkProcessingDocumentsProgress()
+
+    // 检查是否还有pending/processing的文档
     if (hasChanges) {
       checkAndStartStatusPolling()
     }
@@ -422,6 +524,22 @@ const handleFileUpload = async (e: Event) => {
     if (file.size > maxSize) {
       showMessage('error', `文件"${file.name}"超过100MB限制`)
       continue
+    }
+
+    // 🔥 新增：检查PDF页数（扫描版PDF限制200页）
+    if (file.name.toLowerCase().endsWith('.pdf')) {
+      try {
+        const pageCount = await checkPdfPageCount(file)
+        console.log(`PDF "${file.name}" 页数: ${pageCount}`)
+
+        if (pageCount > 200) {
+          showMessage('error', `PDF文档"${file.name}"共${pageCount}页，超过扫描版PDF处理限制（200页）。请上传文本格式的PDF，或将文档拆分为200页以内的小文件。`)
+          continue
+        }
+      } catch (error) {
+        console.error('检查PDF页数失败:', error)
+        // 页数检查失败不阻止上传，继续正常流程
+      }
     }
 
     uploadProgress.value = {
@@ -965,6 +1083,149 @@ document.addEventListener('click', () => {
   margin: 0 0 12px 0;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.4);
+}
+
+/* 🔥 新增：上传提示悬停弹窗样式 */
+.upload-tip-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-right: 12px;
+}
+
+.upload-tip-icon {
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: help;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.12) 0%, rgba(255, 237, 78, 0.06) 100%);
+  border: 1px solid rgba(255, 215, 0, 0.25);
+  color: rgba(255, 215, 0, 0.9);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.upload-tip-icon:hover {
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.2) 0%, rgba(255, 237, 78, 0.1) 100%);
+  border-color: rgba(255, 215, 0, 0.4);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(255, 215, 0, 0.2);
+}
+
+.upload-tip-icon svg {
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
+}
+
+.upload-tip-popup {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  width: 280px;
+  background: linear-gradient(135deg, rgba(20, 20, 22, 0.98) 0%, rgba(15, 15, 17, 0.98) 100%);
+  border: 1px solid rgba(255, 215, 0, 0.3);
+  border-radius: 12px;
+  padding: 16px;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-10px);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 215, 0, 0.1);
+  z-index: 1000;
+  pointer-events: none;
+  backdrop-filter: blur(10px);
+}
+
+/* 添加小三角指示器 */
+.upload-tip-popup::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  right: 12px;
+  width: 12px;
+  height: 12px;
+  background: rgba(20, 20, 22, 0.98);
+  border-left: 1px solid rgba(255, 215, 0, 0.3);
+  border-top: 1px solid rgba(255, 215, 0, 0.3);
+  transform: rotate(45deg);
+}
+
+.upload-tip-wrapper:hover .upload-tip-popup {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.tip-popup-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffd700;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid rgba(255, 215, 0, 0.2);
+  padding-bottom: 8px;
+}
+
+.tip-popup-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tip-highlight {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.95);
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.15) 0%, rgba(34, 197, 94, 0.05) 100%);
+  padding: 8px 10px;
+  border-radius: 6px;
+  border-left: 3px solid #22c55e;
+}
+
+.tip-comparison {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  padding-left: 12px;
+  line-height: 1.6;
+}
+
+.tip-suggestion {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(59, 130, 246, 0.1);
+  padding: 8px 10px;
+  border-radius: 6px;
+  border-left: 3px solid rgba(59, 130, 246, 0.5);
+  line-height: 1.5;
+}
+
+.doc-progress {
+  margin: 0 0 12px 0;
+}
+
+.progress-text {
+  font-size: 11px;
+  color: #ffd700;
+  margin-bottom: 6px;
+  text-align: center;
+}
+
+.progress-bar-mini {
+  height: 3px;
+  background: rgba(255, 215, 0, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill-mini {
+  height: 100%;
+  background: linear-gradient(90deg, #ffd700, #ffed4e);
+  transition: width 0.5s ease-out;
+  box-shadow: 0 0 6px rgba(255, 215, 0, 0.5);
 }
 
 .doc-status {

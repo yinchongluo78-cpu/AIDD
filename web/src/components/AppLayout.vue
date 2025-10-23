@@ -4,7 +4,7 @@
     <header class="app-header">
       <div class="header-left">
         <h1 class="main-title">智能少年</h1>
-        <p class="sub-title">拥有自学能力，学历是副产品</p>
+        <p class="sub-title">自学为基础 生产为导向</p>
       </div>
 
       <nav class="header-nav">
