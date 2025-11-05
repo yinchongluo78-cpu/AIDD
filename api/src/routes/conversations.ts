@@ -238,8 +238,7 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
         categoryId,
         req.userId,
         useStructuredRetrieval ? 15 : 8, // 结构化检索时返回更多切片以覆盖文档开头部分
-        documentIds, // 支持精确指定文档ID
-        useStructuredRetrieval // 传递结构化检索标志
+        documentIds // 支持精确指定文档ID
       )
 
       if (relevantChunks.length > 0) {
