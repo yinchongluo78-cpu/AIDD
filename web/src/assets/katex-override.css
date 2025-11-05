@@ -1,0 +1,19 @@
+/* KaTeX样式覆盖 - 用于优化数学公式显示 */
+
+.katex {
+  font-size: 1.1em;
+}
+
+.katex-display {
+  margin: 1em 0;
+  text-align: center;
+}
+
+.katex-display > .katex {
+  text-align: center;
+}
+
+/* 确保在深色主题下也能正常显示 */
+.katex .katex-html {
+  color: inherit;
+}

@@ -54,8 +54,15 @@ router.post('/register', async (req, res) => {
 })
 
 router.post('/login', async (req, res) => {
+  console.log('🔵 收到登录请求!', {
+    body: req.body,
+    headers: req.headers
+  })
+
   try {
     const { email, password } = req.body
+
+    console.log('📧 查询用户:', email)
 
     const user = await prisma.user.findUnique({
       where: { email },
@@ -65,21 +72,26 @@ router.post('/login', async (req, res) => {
     })
 
     if (!user) {
+      console.log('❌ 用户不存在:', email)
       return res.status(401).json({ message: '邮箱或密码错误' })
     }
 
+    console.log('✅ 用户找到,验证密码...')
     const validPassword = await bcrypt.compare(password, user.passwordHash)
 
     if (!validPassword) {
+      console.log('❌ 密码错误')
       return res.status(401).json({ message: '邮箱或密码错误' })
     }
 
+    console.log('✅ 密码正确,生成token...')
     const token = jwt.sign(
       { userId: user.id },
       process.env.JWT_SECRET || 'default-secret',
       { expiresIn: '7d' }
     )
 
+    console.log('✅ 登录成功!')
     res.json({
       token,
       user: {
@@ -93,7 +105,7 @@ router.post('/login', async (req, res) => {
       }
     })
   } catch (error) {
-    console.error('登录错误:', error)
+    console.error('❌ 登录错误:', error)
     res.status(500).json({ message: '登录失败' })
   }
 })

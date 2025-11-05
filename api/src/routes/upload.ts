@@ -3,10 +3,11 @@ import multer from 'multer'
 import path from 'path'
 import fs from 'fs/promises'
 import { authenticateToken, AuthRequest } from '../middleware/auth'
+import { uploadFile, getSignedUrl } from '../services/oss'
 
 const router = Router()
 
-// 创建上传目录
+// 创建上传目录（备用）
 const uploadDir = path.join(__dirname, '../../uploads')
 fs.mkdir(uploadDir, { recursive: true }).catch(console.error)
 
@@ -17,7 +18,25 @@ const upload = multer({
   }
 })
 
-// 模拟文件上传服务
+// 上传文件到OSS
+async function saveFileToOSS(file: Express.Multer.File, folder: string = 'uploads'): Promise<{ url: string; key: string }> {
+  const ext = path.extname(file.originalname)
+  const filename = `${Date.now()}-${Math.random().toString(36).substring(2)}${ext}`
+  const key = `${folder}/${filename}`
+
+  // 上传到OSS
+  await uploadFile(key, file.buffer)
+
+  // 生成1小时有效期的预签名URL用于前端显示
+  const signedUrl = await getSignedUrl(key, 3600)
+
+  return {
+    url: signedUrl,
+    key: key
+  }
+}
+
+// 模拟文件上传服务（本地备用，已弃用）
 async function saveFile(file: Express.Multer.File, folder: string = 'uploads'): Promise<{ url: string; key: string }> {
   const ext = path.extname(file.originalname)
   const filename = `${Date.now()}-${Math.random().toString(36).substring(2)}${ext}`
@@ -45,7 +64,9 @@ router.post('/image', authenticateToken, upload.single('image'), async (req: Aut
       return res.status(400).json({ message: '请选择图片' })
     }
 
-    const result = await saveFile(req.file, 'images')
+    console.log('开始上传图片到OSS...')
+    const result = await saveFileToOSS(req.file, 'images')
+    console.log('图片上传OSS成功:', result.key)
     res.json(result)
   } catch (error) {
     console.error('上传图片错误:', error)
@@ -69,9 +90,9 @@ router.post('/document', authenticateToken, upload.single('document'), async (re
       return res.status(400).json({ message: '请选择文档' })
     }
 
-    console.log('开始保存文件到存储...')
-    const result = await saveFile(req.file, 'documents')
-    console.log('文件保存结果:', result)
+    console.log('开始上传文件到OSS...')
+    const result = await saveFileToOSS(req.file, 'documents')
+    console.log('文件保存到OSS成功:', result.key)
 
     // 确保文件名正确编码
     const fileName = Buffer.from(req.file.originalname, 'latin1').toString('utf8')
@@ -103,7 +124,9 @@ router.post('/avatar', authenticateToken, upload.single('avatar'), async (req: A
       return res.status(400).json({ message: '请选择头像' })
     }
 
-    const result = await saveFile(req.file, 'avatars')
+    console.log('开始上传头像到OSS...')
+    const result = await saveFileToOSS(req.file, 'avatars')
+    console.log('头像上传OSS成功:', result.key)
     res.json(result)
   } catch (error) {
     console.error('上传头像错误:', error)

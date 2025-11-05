@@ -10,6 +10,7 @@ import kbRoutes from './routes/kb'
 import chatRoutes from './routes/chat'
 import uploadRoutes from './routes/upload'
 import adminRoutes from './routes/admin'
+import diagnosticRoutes from './routes/diagnostic'
 
 dotenv.config()
 
@@ -47,6 +48,7 @@ app.use('/api/kb', kbRoutes)
 app.use('/api/chat', chatRoutes)
 app.use('/api/upload', uploadRoutes)
 app.use('/api/admin', adminRoutes)
+app.use('/api/diagnostic', diagnosticRoutes)
 
 app.listen(PORT, () => {
   console.log(`后端服务运行在 http://localhost:${PORT}`)

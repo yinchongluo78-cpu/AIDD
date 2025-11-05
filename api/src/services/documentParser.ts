@@ -1,5 +1,8 @@
 import { PrismaClient } from '@prisma/client'
 import axios from 'axios'
+import { getSignedUrl } from './oss'
+import pdfParse from 'pdf-parse'
+import mammoth from 'mammoth'
 
 const prisma = new PrismaClient()
 
@@ -14,16 +17,71 @@ export async function parseAndStoreDocument(documentId: string, documentUrl: str
   try {
     console.log(`开始解析文档: ${documentId}`)
 
+    // 获取文档信息，判断文件类型
+    const document = await prisma.kbDocument.findUnique({
+      where: { id: documentId }
+    })
+
+    if (!document) {
+      throw new Error('文档不存在')
+    }
+
+    const isPdf = document.fileExt?.toLowerCase() === '.pdf' ||
+                  document.filename?.toLowerCase().endsWith('.pdf')
+    const isDocx = document.fileExt?.toLowerCase().includes('wordprocessingml') ||
+                   document.filename?.toLowerCase().endsWith('.docx')
+
+    console.log(`文件类型: ${isPdf ? 'PDF' : isDocx ? 'DOCX' : '文本文件'}`)
+
     // 获取文档内容
     let content = ''
 
-    // 如果是OSS URL，直接下载内容
+    // 如果是OSS URL，需要先生成签名URL再下载
     if (documentUrl.startsWith('http')) {
-      const response = await axios.get(documentUrl, {
-        responseType: 'text',
-        timeout: 30000
-      })
-      content = response.data
+      // 从OSS URL中提取key
+      let ossKey = documentUrl
+      if (documentUrl.includes('aliyuncs.com/')) {
+        ossKey = documentUrl.split('aliyuncs.com/')[1].split('?')[0] // 移除URL参数
+      }
+
+      // 生成签名URL（1小时有效期）
+      const signedUrl = await getSignedUrl(ossKey, 3600)
+      console.log('使用签名URL下载文档:', signedUrl.substring(0, 100) + '...')
+
+      if (isPdf) {
+        // PDF文件：下载为buffer
+        const response = await axios.get(signedUrl, {
+          responseType: 'arraybuffer',
+          timeout: 60000 // PDF文件可能较大，增加超时时间
+        })
+        console.log(`PDF文件下载完成，大小: ${(response.data.length / 1024 / 1024).toFixed(2)}MB`)
+
+        // 使用pdf-parse解析
+        const pdfData = await pdfParse(response.data)
+        content = pdfData.text
+        console.log(`PDF解析完成，提取文本长度: ${content.length}`)
+        console.log(`PDF信息 - 页数: ${pdfData.numpages}, 文本预览: ${content.substring(0, 200)}`)
+      } else if (isDocx) {
+        // DOCX文件：下载为buffer
+        const response = await axios.get(signedUrl, {
+          responseType: 'arraybuffer',
+          timeout: 60000
+        })
+        console.log(`DOCX文件下载完成，大小: ${(response.data.length / 1024 / 1024).toFixed(2)}MB`)
+
+        // 使用mammoth解析
+        const result = await mammoth.extractRawText({ buffer: response.data })
+        content = result.value
+        console.log(`DOCX解析完成，提取文本长度: ${content.length}`)
+        console.log(`DOCX文本预览: ${content.substring(0, 200)}`)
+      } else {
+        // 文本文件：保持原有逻辑
+        const response = await axios.get(signedUrl, {
+          responseType: 'text',
+          timeout: 30000
+        })
+        content = response.data
+      }
     } else {
       // 本地文件路径 - 需要处理相对路径
       const fs = require('fs').promises
@@ -36,8 +94,24 @@ export async function parseAndStoreDocument(documentId: string, documentUrl: str
       }
 
       console.log(`尝试读取文件: ${fullPath}`)
-      content = await fs.readFile(fullPath, 'utf-8')
-      console.log(`文件读取成功，内容长度: ${content.length}`)
+
+      if (isPdf) {
+        // PDF文件：读取为buffer
+        const dataBuffer = await fs.readFile(fullPath)
+        const pdfData = await pdfParse(dataBuffer)
+        content = pdfData.text
+        console.log(`PDF解析完成，提取文本长度: ${content.length}`)
+      } else if (isDocx) {
+        // DOCX文件：读取为buffer
+        const dataBuffer = await fs.readFile(fullPath)
+        const result = await mammoth.extractRawText({ buffer: dataBuffer })
+        content = result.value
+        console.log(`DOCX解析完成，提取文本长度: ${content.length}`)
+      } else {
+        // 文本文件：保持原有逻辑
+        content = await fs.readFile(fullPath, 'utf-8')
+        console.log(`文件读取成功，内容长度: ${content.length}`)
+      }
     }
 
     // 清理内容
@@ -62,9 +136,20 @@ export async function parseAndStoreDocument(documentId: string, documentUrl: str
     await Promise.all(chunkPromises)
     console.log(`成功存储 ${chunks.length} 个切片到数据库`)
 
+    // 更新文档状态为已解析
+    await prisma.kbDocument.update({
+      where: { id: documentId },
+      data: { status: 'parsed' }
+    })
+
     return chunks.length
   } catch (error) {
     console.error('解析文档失败:', error)
+    // 更新文档状态为解析失败
+    await prisma.kbDocument.update({
+      where: { id: documentId },
+      data: { status: 'failed' }
+    })
     throw error
   }
 }
@@ -73,9 +158,6 @@ export async function parseAndStoreDocument(documentId: string, documentUrl: str
  * 清理文档内容
  */
 function cleanContent(content: string): string {
-  // 移除多余的空白字符
-  content = content.replace(/\s+/g, ' ')
-
   // 移除常见的页眉页脚模式
   content = content.replace(/第\s*\d+\s*页/g, '')
   content = content.replace(/Page\s*\d+/gi, '')
@@ -83,8 +165,11 @@ function cleanContent(content: string): string {
   // 移除目录相关的点线
   content = content.replace(/\.{3,}/g, '')
 
-  // 移除多余的换行
+  // 移除多余的换行(保留单换行和双换行)
   content = content.replace(/\n{3,}/g, '\n\n')
+
+  // 只移除行首行尾的空白,不处理中间的空白(避免大文本性能问题)
+  content = content.split('\n').map(line => line.trim()).join('\n')
 
   return content.trim()
 }
@@ -126,19 +211,88 @@ function createChunks(content: string, chunkSize: number, overlap: number): stri
 }
 
 /**
- * 搜索相关的文档切片
+ * 计算文本相似度分数（改进的关键词匹配）
+ */
+function calculateRelevanceScore(query: string, content: string): number {
+  const queryTokens = tokenize(query)
+  const contentTokens = tokenize(content)
+
+  if (queryTokens.length === 0 || contentTokens.length === 0) return 0
+
+  let score = 0
+  const contentLower = content.toLowerCase()
+
+  queryTokens.forEach(token => {
+    // 完全匹配得分更高
+    const exactMatches = (contentLower.match(new RegExp(token, 'g')) || []).length
+    score += exactMatches * 2
+
+    // 部分匹配也给分
+    contentTokens.forEach(cToken => {
+      if (cToken.includes(token) || token.includes(cToken)) {
+        score += 0.5
+      }
+    })
+  })
+
+  // 归一化分数（考虑查询长度）
+  return score / queryTokens.length
+}
+
+/**
+ * 分词函数（改进版 - 支持中文）
+ */
+function tokenize(text: string): string[] {
+  const tokens: string[] = []
+
+  // 清理文本,只保留中文、英文、数字
+  const cleaned = text.toLowerCase().replace(/[^\u4e00-\u9fa5a-z0-9\s]/g, ' ')
+
+  // 提取英文单词(按空格分割)
+  const englishWords = cleaned.match(/[a-z0-9]+/g) || []
+  tokens.push(...englishWords.filter(w => w.length > 1))
+
+  // 提取中文词组(2-4字)
+  const chineseText = cleaned.replace(/[a-z0-9\s]/g, '')
+  for (let i = 0; i < chineseText.length; i++) {
+    // 提取2字词
+    if (i + 1 < chineseText.length) {
+      tokens.push(chineseText.substring(i, i + 2))
+    }
+    // 提取3字词
+    if (i + 2 < chineseText.length) {
+      tokens.push(chineseText.substring(i, i + 3))
+    }
+    // 提取4字词
+    if (i + 3 < chineseText.length) {
+      tokens.push(chineseText.substring(i, i + 4))
+    }
+  }
+
+  // 去重
+  return [...new Set(tokens)]
+}
+
+/**
+ * 搜索相关的文档切片（优化版）
  */
 export async function searchDocumentChunks(
   query: string,
   categoryId?: string,
   userId?: string,
-  limit: number = 5
-): Promise<Array<{chunk: any, document: any}>> {
+  limit: number = 5,
+  documentIds?: string[]
+): Promise<Array<{chunk: any, document: any, score: number}>> {
   try {
+    console.log('=== 知识库检索 ===')
+    console.log('查询:', query)
+    console.log('分类ID:', categoryId || '无')
+    console.log('文档IDs:', documentIds?.length || 0)
+
     // 构建查询条件
     const whereClause: any = {}
 
-    if (categoryId || userId) {
+    if (categoryId || userId || documentIds) {
       whereClause.document = {}
       if (categoryId) {
         whereClause.document.categoryId = categoryId
@@ -146,13 +300,52 @@ export async function searchDocumentChunks(
       if (userId) {
         whereClause.document.userId = userId
       }
+      if (documentIds && documentIds.length > 0) {
+        whereClause.document.id = {
+          in: documentIds
+        }
+      }
     }
 
-    // 简单的关键词搜索（后续可以升级为向量搜索）
-    // 由于PostgreSQL的全文搜索配置复杂，这里使用简单的LIKE查询
-    const keywords = query.split(' ').filter(k => k.length > 1)
+    // 检测是否是概述性问题（希望了解文档整体内容）
+    const isSummaryQuery = /讲了什么|有什么内容|主要内容|总结|概括|介绍|大纲|目录/.test(query)
+
+    if (isSummaryQuery && documentIds && documentIds.length > 0) {
+      console.log('🔍 检测到概述性问题，返回文档开头部分供大模型理解')
+
+      // 返回文档开头部分，让大模型基于完整内容回答
+      const summaryChunks = await prisma.kbChunk.findMany({
+        where: {
+          document: {
+            id: {
+              in: documentIds
+            }
+          }
+        },
+        include: {
+          document: true
+        },
+        orderBy: {
+          seq: 'asc'
+        },
+        take: limit * 2 // 概述性问题返回更多内容
+      })
+
+      console.log(`返回 ${summaryChunks.length} 个文档开头切片供大模型分析`)
+
+      return summaryChunks.map(chunk => ({
+        chunk,
+        document: chunk.document,
+        score: 1.0 // 概述性查询给予高分
+      }))
+    }
+
+    // 提取关键词进行精确检索
+    const keywords = tokenize(query)
+    console.log('提取关键词:', keywords)
 
     if (keywords.length > 0) {
+      // 使用OR条件匹配任意关键词
       whereClause.OR = keywords.map(keyword => ({
         content: {
           contains: keyword,
@@ -161,21 +354,64 @@ export async function searchDocumentChunks(
       }))
     }
 
+    // 获取所有匹配的切片
     const chunks = await prisma.kbChunk.findMany({
       where: whereClause,
       include: {
         document: true
       },
-      take: limit,
-      orderBy: {
-        createdAt: 'desc'
-      }
+      take: limit * 3, // 先取更多结果，后面重新排序
     })
 
-    return chunks.map(chunk => ({
-      chunk,
-      document: chunk.document
-    }))
+    console.log(`找到 ${chunks.length} 个初步匹配的切片`)
+
+    // 如果精确检索失败，且有指定文档，返回文档开头让大模型理解
+    if (chunks.length === 0 && documentIds && documentIds.length > 0) {
+      console.log('⚠️ 未找到关键词匹配，返回文档开头部分让大模型理解上下文')
+
+      const fallbackChunks = await prisma.kbChunk.findMany({
+        where: {
+          document: {
+            id: {
+              in: documentIds
+            }
+          }
+        },
+        include: {
+          document: true
+        },
+        orderBy: {
+          seq: 'asc'
+        },
+        take: limit
+      })
+
+      console.log(`返回 ${fallbackChunks.length} 个文档开头切片`)
+
+      return fallbackChunks.map(chunk => ({
+        chunk,
+        document: chunk.document,
+        score: 0.3 // 给予中等分数
+      }))
+    }
+
+    // 计算相关性分数并排序
+    const rankedChunks = chunks
+      .map(chunk => ({
+        chunk,
+        document: chunk.document,
+        score: calculateRelevanceScore(query, chunk.content)
+      }))
+      .sort((a, b) => b.score - a.score) // 按分数降序
+      .slice(0, limit) // 取top N
+
+    console.log('最终返回切片数:', rankedChunks.length)
+    if (rankedChunks.length > 0) {
+      console.log('最高分数:', rankedChunks[0].score)
+      console.log('最高分切片预览:', rankedChunks[0].chunk.content.substring(0, 100))
+    }
+
+    return rankedChunks
   } catch (error) {
     console.error('搜索文档切片失败:', error)
     return []
