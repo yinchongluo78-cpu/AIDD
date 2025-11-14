@@ -141,11 +141,11 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
       console.log('自定义指令内容（前100字）:', currentConversation.customInstructions.substring(0, 100) + '...')
     }
 
-    // 获取历史消息（增加到20条以提供更完整的上下文）
+    // 获取历史消息（支持最多50轮对话，即100条消息）
     const messages = await prisma.message.findMany({
       where: { conversationId },
       orderBy: { createdAt: 'asc' },
-      take: 20
+      take: 100
     })
 
     const apiMessages = messages.slice(0, -1).map(msg => ({
@@ -370,6 +370,15 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
 
     console.log(`✅ 最终内容组合完成，总长度: ${fullContent.length}字符`)
 
+    // 🔥 重要：更新用户消息，将 OCR 结果保存到数据库，确保后续对话能看到图片内容
+    if (ocrResult || kbContext) {
+      await prisma.message.update({
+        where: { id: userMessage.id },
+        data: { content: fullContent }
+      })
+      console.log('✅ 已更新用户消息，包含 OCR 和知识库上下文')
+    }
+
     // 限制发送给DeepSeek API的内容大小，避免413错误
     // DeepSeek API限制请求体约在1MB左右，我们控制在500KB以内
     const maxContentLength = 15000 // 减小初始内容限制
@@ -545,8 +554,49 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
 
     let responseContent = ''
     let buffer = ''
+    let streamEnded = false // 标记流是否已结束，避免重复处理
+    let lastDataTime = Date.now() // 记录最后一次收到数据的时间
+
+    // 超时检测：如果30秒没有收到新数据，主动结束流
+    const timeoutCheck = setInterval(() => {
+      const timeSinceLastData = Date.now() - lastDataTime
+      if (timeSinceLastData > 30000 && !streamEnded) {
+        console.warn('⚠️ 流传输超时（30秒无数据），主动结束')
+        clearInterval(timeoutCheck)
+        streamEnded = true
+
+        // 如果已经有部分内容，保存并通知前端
+        if (responseContent.trim()) {
+          prisma.message.create({
+            data: {
+              conversationId,
+              role: 'assistant',
+              content: responseContent + '\n\n[注意：响应因超时被截断]',
+              citations: citations.length > 0 ? (JSON.stringify(citations) as any) : null
+            }
+          }).then(assistantMessage => {
+            if (!res.writableEnded) {
+              res.write(`data: ${JSON.stringify({ type: 'done', data: assistantMessage })}\n\n`)
+              res.end()
+            }
+          }).catch(err => {
+            console.error('保存超时消息失败:', err)
+            if (!res.writableEnded) {
+              res.end()
+            }
+          })
+        } else {
+          // 没有内容，直接通知前端错误
+          if (!res.writableEnded) {
+            res.write(`data: ${JSON.stringify({ type: 'error', message: 'AI响应超时，请重试' })}\n\n`)
+            res.end()
+          }
+        }
+      }
+    }, 5000) // 每5秒检查一次
 
     response.data.on('data', (chunk: Buffer) => {
+      lastDataTime = Date.now() // 更新最后收到数据的时间
       buffer += chunk.toString()
       const lines = buffer.split('\n')
       buffer = lines.pop() || ''
@@ -555,7 +605,10 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
         if (line.startsWith('data: ')) {
           const data = line.slice(6)
           if (data === '[DONE]') {
-            console.log('流式传输结束')
+            console.log('✅ 流式传输正常结束（收到 [DONE]）')
+            clearInterval(timeoutCheck)
+            streamEnded = true
+
             // 流结束，保存完整的助手消息（包含引用信息）
             prisma.message.create({
               data: {
@@ -565,8 +618,16 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
                 citations: citations.length > 0 ? (JSON.stringify(citations) as any) : null
               }
             }).then(assistantMessage => {
-              res.write(`data: ${JSON.stringify({ type: 'done', data: assistantMessage })}\n\n`)
-              res.end()
+              if (!res.writableEnded) {
+                res.write(`data: ${JSON.stringify({ type: 'done', data: assistantMessage })}\n\n`)
+                res.end()
+              }
+            }).catch(err => {
+              console.error('❌ 保存消息失败:', err)
+              if (!res.writableEnded) {
+                res.write(`data: ${JSON.stringify({ type: 'error', message: '保存消息失败' })}\n\n`)
+                res.end()
+              }
             })
           } else {
             try {
@@ -575,11 +636,13 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
               if (content) {
                 responseContent += content
                 // 发送流式内容
-                console.log('发送流式片段:', content.substring(0, 20))
-                res.write(`data: ${JSON.stringify({ type: 'stream', content })}\n\n`)
+                console.log('📤 发送流式片段:', content.substring(0, 20))
+                if (!res.writableEnded) {
+                  res.write(`data: ${JSON.stringify({ type: 'stream', content })}\n\n`)
+                }
               }
             } catch (e) {
-              console.error('解析流数据错误:', e)
+              console.error('❌ 解析流数据错误:', e, '原始数据:', data.substring(0, 100))
             }
           }
         }
@@ -587,9 +650,95 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
     })
 
     response.data.on('error', (error: any) => {
-      console.error('流错误:', error)
-      res.write(`data: ${JSON.stringify({ type: 'error', message: '生成响应时出错' })}\n\n`)
-      res.end()
+      console.error('❌ DeepSeek 流错误:', error)
+      clearInterval(timeoutCheck)
+      streamEnded = true
+
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ type: 'error', message: '生成响应时出错' })}\n\n`)
+        res.end()
+      }
+    })
+
+    // 🔥 新增：监听流正常结束事件
+    response.data.on('end', () => {
+      console.log('📡 DeepSeek 流连接正常结束')
+      clearInterval(timeoutCheck)
+
+      // 如果流结束但没有收到 [DONE] 标记，需要兜底处理
+      if (!streamEnded) {
+        console.warn('⚠️ 流结束但未收到 [DONE] 标记，执行兜底处理')
+        streamEnded = true
+
+        if (responseContent.trim()) {
+          // 有内容，保存并通知前端
+          prisma.message.create({
+            data: {
+              conversationId,
+              role: 'assistant',
+              content: responseContent,
+              citations: citations.length > 0 ? (JSON.stringify(citations) as any) : null
+            }
+          }).then(assistantMessage => {
+            if (!res.writableEnded) {
+              res.write(`data: ${JSON.stringify({ type: 'done', data: assistantMessage })}\n\n`)
+              res.end()
+            }
+          }).catch(err => {
+            console.error('❌ 兜底保存消息失败:', err)
+            if (!res.writableEnded) {
+              res.end()
+            }
+          })
+        } else {
+          // 没有内容，通知前端错误
+          console.error('❌ 流结束但没有收到任何内容')
+          if (!res.writableEnded) {
+            res.write(`data: ${JSON.stringify({ type: 'error', message: 'AI未返回任何内容，请重试' })}\n\n`)
+            res.end()
+          }
+        }
+      }
+    })
+
+    // 🔥 新增：监听流异常关闭事件
+    response.data.on('close', () => {
+      console.log('🔌 DeepSeek 流连接关闭')
+      clearInterval(timeoutCheck)
+
+      // 如果连接关闭但流还没结束，需要兜底处理
+      if (!streamEnded) {
+        console.warn('⚠️ 连接异常关闭，执行兜底处理')
+        streamEnded = true
+
+        if (responseContent.trim()) {
+          // 有部分内容，保存并通知前端
+          prisma.message.create({
+            data: {
+              conversationId,
+              role: 'assistant',
+              content: responseContent,
+              citations: citations.length > 0 ? (JSON.stringify(citations) as any) : null
+            }
+          }).then(assistantMessage => {
+            if (!res.writableEnded) {
+              res.write(`data: ${JSON.stringify({ type: 'done', data: assistantMessage })}\n\n`)
+              res.end()
+            }
+          }).catch(err => {
+            console.error('❌ 关闭时保存消息失败:', err)
+            if (!res.writableEnded) {
+              res.end()
+            }
+          })
+        } else {
+          // 没有内容
+          if (!res.writableEnded) {
+            res.write(`data: ${JSON.stringify({ type: 'error', message: '连接中断，请重试' })}\n\n`)
+            res.end()
+          }
+        }
+      }
     })
 
     // 生成标题 - 获取对话信息
