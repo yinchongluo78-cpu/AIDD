@@ -472,9 +472,9 @@
 </template>
 
 <script setup lang="ts">
-// 🔥🔥🔥 版本标记 - 2025-10-13 16:38 - 文档自动选中修复版本 🔥🔥🔥
-console.log('%c🔥 Chat.vue 已加载 - 版本: 2025-10-13-16:38 🔥', 'color: #ff6b6b; font-size: 16px; font-weight: bold;')
-console.log('%c文档自动选中功能已修复', 'color: #4ecdc4; font-size: 14px;')
+// 🔥🔥🔥 版本标记 - 2025-11-15 12:05 - 移除默认选中第一条对话 🔥🔥🔥
+console.log('%c🔥 Chat.vue 已加载 - 版本: 2025-11-15-12:05 🔥', 'color: #ff6b6b; font-size: 16px; font-weight: bold;')
+console.log('%c移除默认选中第一条对话，用户主动点击才高亮', 'color: #4ecdc4; font-size: 14px;')
 
 import { ref, computed, onMounted, onActivated, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
