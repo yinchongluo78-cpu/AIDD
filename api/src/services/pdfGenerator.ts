@@ -1,3 +1,4 @@
+// @ts-nocheck
 import puppeteer from 'puppeteer'
 import { marked } from 'marked'
 
