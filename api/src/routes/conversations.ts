@@ -360,6 +360,18 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
       }
     }
 
+    // 🔥 重要：只保存用户输入 + OCR 结果到数据库（不包括 kbContext）
+    // 这样确保后续对话能看到图片内容，但不会显示系统提示给用户
+    if (ocrResult) {
+      const contentForDB = content + (ocrResult ? `\n\n【图片识别内容】\n${ocrResult}` : '')
+      await prisma.message.update({
+        where: { id: userMessage.id },
+        data: { content: contentForDB }
+      })
+      console.log('✅ 已更新用户消息，包含 OCR 结果')
+    }
+
+    // kbContext 只添加到发送给 AI 的内容中，不保存到数据库
     if (kbContext) {
       if (fullContent) {
         fullContent += `\n${kbContext}\n注意：以上参考资料仅供辅助，请优先根据对话上下文理解我的意图。`
@@ -369,15 +381,6 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
     }
 
     console.log(`✅ 最终内容组合完成，总长度: ${fullContent.length}字符`)
-
-    // 🔥 重要：更新用户消息，将 OCR 结果保存到数据库，确保后续对话能看到图片内容
-    if (ocrResult || kbContext) {
-      await prisma.message.update({
-        where: { id: userMessage.id },
-        data: { content: fullContent }
-      })
-      console.log('✅ 已更新用户消息，包含 OCR 和知识库上下文')
-    }
 
     // 限制发送给DeepSeek API的内容大小，避免413错误
     // DeepSeek API限制请求体约在1MB左右，我们控制在500KB以内
