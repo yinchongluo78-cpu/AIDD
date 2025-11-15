@@ -40,9 +40,9 @@ cd /root/myproject/lyc2/web
 pnpm install --prefer-offline
 pnpm build
 
-sudo rm -rf /var/www/lyc2/web/dist
-sudo mkdir -p /var/www/lyc2/web
-sudo cp -r dist /var/www/lyc2/web/
+sudo rm -rf /var/www/lyc-ai/web/dist
+sudo mkdir -p /var/www/lyc-ai/web
+sudo cp -r dist /var/www/lyc-ai/web/
 
 echo "✅ Web 构建完成"
 ENDSSH

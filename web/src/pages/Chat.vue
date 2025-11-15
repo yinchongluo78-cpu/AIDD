@@ -473,7 +473,7 @@
 
 <script setup lang="ts">
 // 🔥🔥🔥 版本标记 - 2025-11-15 12:05 - 移除默认选中第一条对话 🔥🔥🔥
-console.log('%c🔥 Chat.vue 已加载 - 版本: 2025-11-15-12:50 🔥', 'color: #ff6b6b; font-size: 16px; font-weight: bold;')
+console.log('%c🔥 Chat.vue 已加载 - 版本: 2025-11-15-13:45 🔥', 'color: #ff6b6b; font-size: 16px; font-weight: bold;')
 console.log('%c移除默认选中第一条对话，用户主动点击才高亮', 'color: #4ecdc4; font-size: 14px;')
 
 import { ref, computed, onMounted, onActivated, nextTick } from 'vue'
