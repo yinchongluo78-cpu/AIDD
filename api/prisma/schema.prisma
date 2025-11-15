@@ -27,12 +27,13 @@ model Profile {
   userId               String   @id @db.Uuid @map("user_id")
   name                 String?
   age                  Int?
-  grade                String?
+  grade                String?  // 数据库保持可选，应用层强制要求
   phone                String?
   location             String?
   avatarUrl            String?  @map("avatar_url")
   hasCompletedTutorial Boolean  @default(false) @map("has_completed_tutorial")
   tutorialStep         Int      @default(0) @map("tutorial_step")
+  customSystemPrompt   String?  @map("custom_system_prompt") @db.Text
   updatedAt            DateTime @default(now()) @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -128,4 +129,108 @@ model UserSession {
 
   @@map("user_sessions")
   @@index([userId, startTime])
+}
+
+// ==================== 测评系统模型 ====================
+
+// 测评模块配置（性格、数理逻辑、天赋、知识点掌握）
+model AssessmentModule {
+  id         String   @id @default(uuid()) @db.Uuid
+  slug       String   @unique  // personality, logical_math, talent, knowledge_mastery
+  name       String              // 性格测评、数理逻辑、天赋倾向、知识点掌握
+  type       String              // personality / cognition / talent / knowledge
+  isRequired Boolean  @default(false) @map("is_required")
+  isActive   Boolean  @default(true) @map("is_active")
+  sortOrder  Int      @default(0) @map("sort_order")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  questions AssessmentQuestion[]
+  attempts  AssessmentAttempt[]
+
+  @@map("assessment_modules")
+  @@index([isActive, sortOrder])
+}
+
+// 测评题目
+model AssessmentQuestion {
+  id           String  @id @default(uuid()) @db.Uuid
+  moduleId     String  @db.Uuid @map("module_id")
+  content      String  @db.Text  // 题干
+  options      Json?              // 选项 [{ key: 'A', text: '...' }, ...]
+  correctKey   String? @map("correct_key")  // 知识题正确答案
+  questionType String  @map("question_type")  // single_choice / multi_choice / scale / open
+  targetGrade  String? @map("target_grade")  // 小学4-6年级 / 初中1年级 等
+  order        Int     @default(0)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  module  AssessmentModule   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  answers AssessmentAnswer[]
+
+  @@map("assessment_questions")
+  @@index([moduleId, order])
+  @@index([targetGrade])
+}
+
+// 单次测评记录
+model AssessmentAttempt {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid @map("user_id")
+  moduleId    String    @db.Uuid @map("module_id")
+  startedAt   DateTime  @default(now()) @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  score       Float?
+  resultJson  Json?     @map("result_json")  // 结构化分析结果
+  isDaily     Boolean   @default(false) @map("is_daily")
+
+  module  AssessmentModule   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  answers AssessmentAnswer[]
+
+  @@map("assessment_attempts")
+  @@index([userId, moduleId])
+  @@index([userId, isDaily, startedAt])
+}
+
+// 题目作答记录
+model AssessmentAnswer {
+  id         String   @id @default(uuid()) @db.Uuid
+  attemptId  String   @db.Uuid @map("attempt_id")
+  questionId String   @db.Uuid @map("question_id")
+  answer     Json                // 用户答案（单选：{key:'A'} / 多选：{keys:['A','B']} / 量表：{score:3} / 开放：{text:'...'}）
+  isCorrect  Boolean? @map("is_correct")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  attempt  AssessmentAttempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question AssessmentQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@map("assessment_answers")
+  @@index([attemptId])
+}
+
+// 学生画像汇总（给AI老师用）
+model AssessmentProfile {
+  id                  String   @id @default(uuid()) @db.Uuid
+  userId              String   @unique @db.Uuid @map("user_id")
+  traitsJson          Json?    @map("traits_json")           // 性格特点
+  learningStyleJson   Json?    @map("learning_style_json")   // 学习风格
+  difficultyLevelJson Json?    @map("difficulty_level_json") // 各科难度
+  dailyProgressJson   Json?    @map("daily_progress_json")   // 每日进度
+  teacherPrompt       String?  @map("teacher_prompt") @db.Text  // 缓存的专属老师提示词
+  lastUpdated         DateTime @default(now()) @map("last_updated")
+
+  @@map("assessment_profiles")
+  @@index([userId])
+}
+
+// 测评报告历史记录
+model AssessmentReport {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @db.Uuid @map("user_id")
+  studentName    String   @map("student_name")
+  studentGrade   String?  @map("student_grade")
+  report         String   @db.Text // 报告内容（Markdown格式）
+  generatedBy    String?  @map("generated_by") // 生成者（管理员ID或"system"）
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("assessment_reports")
+  @@index([userId, createdAt])
 }
