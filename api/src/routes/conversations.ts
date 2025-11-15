@@ -55,22 +55,37 @@ router.get('/:id/messages', authenticateToken, async (req: AuthRequest, res) => 
       orderBy: { createdAt: 'asc' }
     })
 
-    // 为带有图片的消息生成预签名 URL
+    // 为带有图片的消息生成预签名 URL，并清理用户消息中的系统提示
     const messagesWithSignedUrls = await Promise.all(
       messages.map(async (msg) => {
+        let cleanedContent = msg.content
+
+        // 🔥 清理用户消息中的知识库上下文（系统提示），只保留用户实际输入的内容
+        if (msg.role === 'user') {
+          // 移除【用户选择的学习资料】部分及其后续内容
+          cleanedContent = cleanedContent.replace(/【用户选择的学习资料】[\s\S]*?(?=【图片识别内容】|$)/g, '')
+          // 移除知识库上下文标记
+          cleanedContent = cleanedContent.replace(/✅.*?知识库分类下文档.*?参考理解[:：][\s\S]*?(?=Input:|【图片识别内容】|$)/g, '')
+          // 移除【来源:...】标记
+          cleanedContent = cleanedContent.replace(/【来源[：:][^】]*】/g, '')
+          // 移除多余的换行
+          cleanedContent = cleanedContent.replace(/\n{3,}/g, '\n\n').trim()
+        }
+
         if (msg.imageOssKey) {
           try {
             const signedUrl = await getSignedUrl(msg.imageOssKey, 3600) // 1小时有效期
             return {
               ...msg,
+              content: cleanedContent,
               imageUrl: signedUrl
             }
           } catch (error) {
             console.error('生成图片预签名URL失败:', error)
-            return msg
+            return { ...msg, content: cleanedContent }
           }
         }
-        return msg
+        return { ...msg, content: cleanedContent }
       })
     )
 
