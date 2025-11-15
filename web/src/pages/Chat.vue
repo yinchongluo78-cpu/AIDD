@@ -136,7 +136,6 @@
                 accept="image/*"
                 style="display: none"
                 @change="handleImageUpload"
-                @click="console.log('文件输入框被点击')"
               />
               <button class="tool-btn" @click="handleImageButtonClick" title="上传图片">
                 <svg viewBox="0 0 24 24" width="20" height="20">
@@ -599,7 +598,7 @@ const contextMenu = ref({
 // 方法
 const createNewChat = async () => {
   try {
-    const response = await api.post('/api/conversations')
+    const response = await api.post('/conversations')
     conversations.value.unshift(response.data)
     currentConversationId.value = response.data.id
     currentMessages.value = []
@@ -611,7 +610,7 @@ const createNewChat = async () => {
 const selectConversation = async (id: string) => {
   currentConversationId.value = id
   try {
-    const response = await api.get(`/api/conversations/${id}/messages`)
+    const response = await api.get(`/conversations/${id}/messages`)
     // 处理历史消息，提取文档信息并清理显示内容
     currentMessages.value = response.data.map(msg => {
       if (msg.role === 'user' && msg.content.includes('[文档:')) {
@@ -760,7 +759,7 @@ const sendMessage = async () => {
     console.log('📤 发送请求到后端:', requestBody)
     console.log('🤖 使用AI模型:', selectedAIModel.value)
 
-    const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/conversations/${currentConversationId.value}/messages/stream`, {
+    const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/conversations/${currentConversationId.value}/messages/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -839,7 +838,7 @@ const sendMessage = async () => {
                   const currentConv = conversations.value.find(c => c.id === currentConversationId.value)
                   if (currentConv && currentConv.title === '新对话') {
                     setTimeout(async () => {
-                      const convResponse = await api.get('/api/conversations')
+                      const convResponse = await api.get('/conversations')
                       conversations.value = convResponse.data
                     }, 1000)
                   }
@@ -1001,7 +1000,7 @@ const uploadNewDocument = () => {
 
     // 加载知识库分类
     try {
-      const response = await api.get('/api/kb/categories')
+      const response = await api.get('/kb/categories')
       categories.value = response.data
       showKnowledgeBaseModal.value = true
     } catch (error) {
@@ -1018,7 +1017,7 @@ const selectFromKnowledgeBase = async () => {
 
   try {
     // 加载分类列表
-    const response = await api.get('/api/kb/categories')
+    const response = await api.get('/kb/categories')
     categories.value = response.data
     showDocumentSelectModal.value = true
   } catch (error) {
@@ -1035,7 +1034,7 @@ const loadCategoryDocuments = async () => {
   }
 
   try {
-    const response = await api.get(`/api/kb/categories/${selectedViewCategoryId.value}/documents`)
+    const response = await api.get(`/kb/categories/${selectedViewCategoryId.value}/documents`)
     categoryDocuments.value = response.data
   } catch (error) {
     console.error('加载文档失败', error)
@@ -1127,7 +1126,7 @@ const uploadToKnowledgeBase = async () => {
     const formData = new FormData()
     formData.append('document', pendingFile.value)
 
-    const uploadResponse = await api.post('/api/upload/document', formData, {
+    const uploadResponse = await api.post('/upload/document', formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
       },
@@ -1147,7 +1146,7 @@ const uploadToKnowledgeBase = async () => {
     }
 
     console.log('准备创建文档记录:', docData)
-    const docResponse = await api.post('/api/kb/documents', docData)
+    const docResponse = await api.post('/kb/documents', docData)
     console.log('文档记录创建成功:', docResponse.data)
 
     // 保存分类名称用于提示
@@ -1234,8 +1233,10 @@ const formatDate = (date: string) => {
 const handleImageButtonClick = () => {
   console.log('图片上传按钮被点击')
   console.log('imageInput ref:', imageInput.value)
-  
+
   if (imageInput.value) {
+    // 重置 input 的 value，确保可以重复选择同一个文件
+    imageInput.value.value = ''
     console.log('触发文件选择器')
     imageInput.value.click()
   } else {
@@ -1277,7 +1278,7 @@ const handleImageUpload = async (e: Event) => {
     formData.append('image', file)
 
     // 上传图片
-    const response = await api.post('/api/upload/image', formData, {
+    const response = await api.post('/upload/image', formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
       }
@@ -1371,7 +1372,7 @@ const renameConversation = async () => {
   if (!newTitle || newTitle === contextMenu.value.conversation.title) return
 
   try {
-    await api.put(`/api/conversations/${contextMenu.value.conversation.id}`, {
+    await api.put(`/conversations/${contextMenu.value.conversation.id}`, {
       title: newTitle
     })
 
@@ -1389,7 +1390,7 @@ const deleteConversation = async () => {
   if (!confirm('确定删除这个对话吗？')) return
 
   try {
-    await api.delete(`/api/conversations/${contextMenu.value.conversation.id}`)
+    await api.delete(`/conversations/${contextMenu.value.conversation.id}`)
     conversations.value = conversations.value.filter(c => c.id !== contextMenu.value.conversation.id)
 
     if (currentConversationId.value === contextMenu.value.conversation.id) {
@@ -1454,7 +1455,7 @@ const saveInstructions = async () => {
     console.log('对话ID:', currentConversationId.value)
     console.log('指令内容:', currentInstructions.value)
 
-    const response = await api.put(`/api/conversations/${currentConversationId.value}`, {
+    const response = await api.put(`/conversations/${currentConversationId.value}`, {
       customInstructions: currentInstructions.value || null
     })
 
@@ -1712,12 +1713,12 @@ onMounted(async () => {
 
   try {
     // 加载对话列表
-    const response = await api.get('/api/conversations')
+    const response = await api.get('/conversations')
     conversations.value = response.data
 
     // 加载知识库分类
     try {
-      const catResponse = await api.get('/api/kb/categories')
+      const catResponse = await api.get('/kb/categories')
       categories.value = catResponse.data
       console.log('知识库分类加载成功:', categories.value.length)
     } catch (error) {
@@ -1776,6 +1777,14 @@ onMounted(async () => {
 
     // 启动新手引导
     await nextTick() // 等待DOM渲染完成
+
+    // 🔥 优先检查 localStorage，确保只弹出一次
+    const tutorialShown = localStorage.getItem('tutorial_shown')
+    if (tutorialShown === 'true') {
+      console.log('新手引导已显示过（localStorage）')
+      return
+    }
+
     await fetchTutorialStatus() // 获取引导状态
 
     // 如果用户还没完成引导，则启动
@@ -3171,6 +3180,7 @@ document.addEventListener('click', () => {
 .message-text :deep(ol) {
   counter-reset: list-counter;
   padding-left: 0;
+  list-style: none;  /* 🔥 隐藏浏览器默认的列表编号 */
 }
 
 .message-text :deep(ol li) {
@@ -3179,6 +3189,7 @@ document.addEventListener('click', () => {
   padding-left: 32px;
   line-height: 1.8;  /* 从1.7提升到1.8 */
   counter-increment: list-counter;
+  list-style: none;  /* 🔥 确保 li 元素也不显示默认编号 */
 }
 
 .message-text :deep(ol li):before {
@@ -3225,6 +3236,9 @@ document.addEventListener('click', () => {
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  table-layout: auto;
+  display: table;
+  max-width: 100%;
 }
 
 .message-text :deep(th),
@@ -3232,6 +3246,11 @@ document.addEventListener('click', () => {
   border: 1px solid rgba(255, 215, 0, 0.15);
   padding: 12px 16px;
   text-align: left;
+  word-wrap: break-word;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  min-width: 80px;
+  max-width: 300px;
 }
 
 .message-text :deep(th) {
