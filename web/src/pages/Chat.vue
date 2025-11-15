@@ -1725,11 +1725,13 @@ onMounted(async () => {
       console.error('加载知识库分类失败:', error)
     }
 
-    if (conversations.value.length > 0) {
-      selectConversation(conversations.value[0].id)
-    } else {
-      // 只有在用户已登录的情况下才创建新对话
+    // 🔥 不再自动选中第一条对话，让用户主动点击选择
+    // 如果没有任何对话，则创建一个新对话（但不自动选中）
+    if (conversations.value.length === 0) {
       await createNewChat()
+      // 创建新对话后，清空选中状态，等待用户主动点击
+      currentConversationId.value = null
+      currentMessages.value = []
     }
 
     // 检查是否有待处理的文档（从知识库跳转过来）
