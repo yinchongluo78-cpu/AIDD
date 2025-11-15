@@ -10,10 +10,20 @@
   "dependencies": {
     "vue": "^3.4.21",
     "vue-router": "^4.3.0",
-    "axios": "^1.6.7"
+    "axios": "^1.6.7",
+    "katex": "^0.16.25",
+    "markdown-it": "^14.1.0",
+    "markdown-it-katex": "^2.0.3",
+    "dompurify": "^3.3.0",
+    "marked": "^17.0.0",
+    "marked-highlight": "^2.0.0",
+    "highlight.js": "^11.10.0",
+    "pdfjs-dist": "^5.4.296"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.4",
+    "@types/dompurify": "^3.0.5",
+    "@types/markdown-it": "^14.1.2",
     "typescript": "^5.4.2",
     "vite": "^5.1.6",
     "vue-tsc": "^2.0.6"
