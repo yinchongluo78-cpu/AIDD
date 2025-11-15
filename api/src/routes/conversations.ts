@@ -106,16 +106,23 @@ router.get('/:id/messages', authenticateToken, async (req: AuthRequest, res) => 
 // 流式响应端点
 router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, res) => {
   try {
-    const { content, imageUrl, categoryId, documentIds, model } = req.body
+    const { content, imageUrl, documentIds, model } = req.body
+    let { categoryId } = req.body
     const conversationId = req.params.id
     const aiModel = model || 'deepseek' // 默认使用DeepSeek
 
-    console.log('=== 流式响应接收到的参数 ===')
+    console.log('=== 流式响应接收到的参数（原始） ===')
     console.log('conversationId:', conversationId, 'type:', typeof conversationId)
+    console.log('categoryId原始值:', JSON.stringify(categoryId), 'type:', typeof categoryId)
     console.log('content长度:', content?.length || 0)
-    console.log('categoryId:', categoryId || 'none')
     console.log('documentIds:', documentIds || 'none')
     console.log('AI模型:', aiModel)
+
+    // 🔥 修复：过滤无效的categoryId值（包括空字符串）
+    if (categoryId === 'none' || categoryId === 'null' || categoryId === 'undefined' || categoryId === '' || !categoryId) {
+      console.log('⚠️ categoryId被过滤，原值:', JSON.stringify(categoryId))
+      categoryId = undefined
+    }
 
     // 设置 SSE 头
     res.writeHead(200, {
@@ -138,14 +145,35 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
     }
 
     // 保存用户消息（记录 imageOssKey，兼容生产库字段）
-    const userMessage = await prisma.message.create({
-      data: {
+    console.log('📝 准备保存用户消息，数据:', {
+      conversationId,
+      conversationIdType: typeof conversationId,
+      role: 'user',
+      content: content?.substring(0, 50) + '...',
+      imageOssKey: initialOssKey
+    })
+
+    let userMessage
+    try {
+      userMessage = await prisma.message.create({
+        data: {
+          conversationId,
+          role: 'user',
+          content,
+          imageOssKey: initialOssKey
+        }
+      })
+      console.log('✅ 用户消息保存成功，ID:', userMessage.id)
+    } catch (error: any) {
+      console.error('❌ 保存用户消息失败:', error.message)
+      console.error('传入数据详情:', JSON.stringify({
         conversationId,
         role: 'user',
-        content,
+        contentLength: content?.length,
         imageOssKey: initialOssKey
-      }
-    })
+      }, null, 2))
+      throw error
+    }
 
     // 发送用户消息确认
     res.write(`data: ${JSON.stringify({ type: 'user_message', data: userMessage })}\n\n`)
@@ -407,16 +435,8 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
       }
     }
 
-    // 🔥 重要：只保存用户输入 + OCR 结果到数据库（不包括 kbContext）
-    // 这样确保后续对话能看到图片内容，但不会显示系统提示给用户
-    if (ocrResult) {
-      const contentForDB = content + (ocrResult ? `\n\n【图片识别内容】\n${ocrResult}` : '')
-      await prisma.message.update({
-        where: { id: userMessage.id },
-        data: { content: contentForDB }
-      })
-      console.log('✅ 已更新用户消息，包含 OCR 结果')
-    }
+    // 🔥 OCR 结果只用于 AI 理解图片，不保存到用户消息中
+    // 用户端只看到原始消息和图片，看不到识别的文字
 
     // kbContext 只添加到发送给 AI 的内容中，不保存到数据库
     if (kbContext) {
@@ -463,14 +483,29 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
    - 答题/测验时完全忽略知识库内容
 
 4️⃣ **数学公式输出规范（非常重要！必须严格遵守）：**
-   - ⚠️ **所有数学公式必须用美元符号包裹，否则小学生看不懂！**
+
+   🚨 **绝对禁止的错误（小学生完全看不懂）：**
+   - ❌ 裸露的LaTeX命令：\\frac{AB}{CO}、\\triangle、\\implies
+   - ❌ 混用LaTeX和Unicode：\\triangle ABF ∼ △COE
+   - ❌ 任何不带美元符号的数学符号
+
+   ✅ **正确做法（小学生能看懂）：**
+   - 所有分数必须加美元符号：$\\frac{AB}{CO}$
+   - 所有三角形符号：$\\triangle ABC$
+   - 所有相似符号：$\\sim$
+   - 所有推导符号：$\\implies$
+
+   **具体规则：**
    - 行内公式：用单个美元符号包裹，如 $E=mc^2$、$\\frac{OF}{OE}$
    - 独立公式：用两个美元符号包裹，如 $$x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}$$
-   - ❌ **错误示例**（小学生看不懂）：\\frac{OF}{OE} = \\frac{AB}{\\frac{n}{2}}
-   - ✅ **正确示例**（小学生能看懂）：$\\frac{OF}{OE} = \\frac{AB}{\\frac{n}{2}}$
-   - 化学式用 LaTeX：$\\ce{H2O}$、$\\ce{CO2}$
-   - 如果知识点涉及多个公式或情景，必须全部列出，不要遗漏
-   - 突出 **易错点** 和 **注意事项**
+   - 化学式：$\\ce{H2O}$、$\\ce{CO2}$
+
+   **错误对比示例：**
+   - ❌ 错误：\\frac{AB}{CO} = \\frac{BF}{OE}（小学生看不懂）
+   - ✅ 正确：$\\frac{AB}{CO} = \\frac{BF}{OE}$（小学生能看懂）
+
+   - ❌ 错误：\\triangle ABF ∼ △COE（混乱）
+   - ✅ 正确：$\\triangle ABF \\sim \\triangle COE$（清晰）
 
 5️⃣ **知识库内容使用要求（严格遵守）：**
    ⚠️ **如果用户消息中包含【资料 1】【资料 2】等标记：**
@@ -493,6 +528,50 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
    - 避免过度嵌套，保持简洁自然
    - 格式要像正常对话一样流畅，不要太机械
 
+   ⚠️ **总结多个资料时的特殊格式要求（必须严格遵守）：**
+   - 当总结【资料 1】【资料 2】【资料 3】等多个资料时
+   - ❌ **禁止**：把资料标题放在有序列表（1. 2. 3.）里
+   - ✅ **正确做法**：每个资料使用 **加粗标题** + 段落说明的格式
+
+   **正确示例：**
+   **【资料 1：承诺书.docx】**
+   这是一份公司承诺书模板，涉及...
+
+   **【资料 2：智能少年AI学习助手_简明使用指南.docx】**
+   这些文档是智能少年AI学习助手的使用指南，介绍了...
+
+   **【资料 3：原版提交要求翻译.docx】**
+   涉及提交和评估的说明，强调了...
+
+   ⚠️ **列举知识点/章节/步骤时的格式要求（必须严格遵守）：**
+
+   🚨 **绝对禁止的做法（会导致编号混乱）：**
+   - ❌ **严禁**：把所有内容都放在一个有序列表（ol）里
+   - ❌ **严禁**：标题用列表项（li），说明也用列表项（li）
+   - ❌ **严禁**：每句话都用一个编号（1. 2. 3. 4. 5. 6. 7. 8...）
+
+   ✅ **正确做法（必须遵守）：**
+   - 标题用 **加粗Markdown** ，例如 **1. 标题**
+   - 说明用普通段落（不要编号）
+   - 如果要编号，只在标题上编号
+
+   ❌ **错误格式（绝对不要这样写）：**
+   1. 已知条件分析：
+   2. O 是 AC 的中点，因此 AO = OC = 1/2 AC 。
+   3. AC/AB = n，这意味着 AC = n × AB 。
+   4. 相似三角形的性质：
+   5. 由于题目第一问已经证明...
+
+   ✅ **正确格式（必须这样写）：**
+   **1. 已知条件分析**
+   O 是 AC 的中点，因此 AO = OC = 1/2 AC 。同时，AC/AB = n，这意味着 AC = n × AB 。
+
+   **2. 相似三角形的性质**
+   由于题目第一问已经证明 △ADF ∼ △COE，根据相似三角形对应边成比例的性质，我们可以得到...
+
+   **3. 计算边长关系**
+   因为 O 是 AC 的中点，所以 CO = 1/2 AC 。由于 AC/AB = n，我们可以表示 CO = 1/2 × n × AB = n/2 AB 。
+
 ---
 
 **记住：自然对话 > 机械批改。让对话像真人老师一样流畅。**`
@@ -508,7 +587,7 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
     // 构建消息数组并检查总大小
     const apiRequestMessages = [
       { role: 'system', content: systemMessage },
-      ...apiMessages.slice(-15), // 保留最近15条历史消息，提供更完整的上下文
+      ...apiMessages.slice(-50), // 保留最近50条历史消息（25轮对话），提供完整的上下文
       { role: 'user', content: fullContent }
     ]
 
@@ -668,6 +747,27 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
             streamEnded = true
 
             // 流结束，保存完整的助手消息（包含引用信息）
+            console.log('💾 准备保存assistant消息，数据:', {
+              conversationId,
+              conversationIdType: typeof conversationId,
+              role: 'assistant',
+              contentLength: responseContent.length,
+              citationsCount: citations.length
+            })
+
+            // 🔥 检查是否收到了实际内容
+            if (!responseContent || responseContent.trim().length === 0) {
+              console.error('❌ DeepSeek返回空内容，可能被内容过滤器拒绝')
+              if (!res.writableEnded) {
+                res.write(`data: ${JSON.stringify({
+                  type: 'error',
+                  message: 'AI无法回答此问题，可能包含敏感内容。请尝试换一种方式提问。'
+                })}\n\n`)
+                res.end()
+              }
+              return
+            }
+
             prisma.message.create({
               data: {
                 conversationId,
@@ -676,12 +776,19 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
                 citations: citations.length > 0 ? (JSON.stringify(citations) as any) : null
               }
             }).then(assistantMessage => {
+              console.log('✅ Assistant消息保存成功，ID:', assistantMessage.id)
               if (!res.writableEnded) {
                 res.write(`data: ${JSON.stringify({ type: 'done', data: assistantMessage })}\n\n`)
                 res.end()
               }
             }).catch(err => {
-              console.error('❌ 保存消息失败:', err)
+              console.error('❌ 保存assistant消息失败:', err.message)
+              console.error('传入数据详情:', JSON.stringify({
+                conversationId,
+                role: 'assistant',
+                contentLength: responseContent.length,
+                citationsCount: citations.length
+              }, null, 2))
               if (!res.writableEnded) {
                 res.write(`data: ${JSON.stringify({ type: 'error', message: '保存消息失败' })}\n\n`)
                 res.end()
@@ -690,7 +797,22 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
           } else {
             try {
               const parsed = JSON.parse(data)
+
+              // 🔥 检查是否有错误或拒绝信息
+              if (parsed.error) {
+                console.error('❌ DeepSeek返回错误:', JSON.stringify(parsed.error, null, 2))
+                console.error('完整响应:', JSON.stringify(parsed, null, 2))
+              }
+
               const content = parsed.choices?.[0]?.delta?.content
+              const finishReason = parsed.choices?.[0]?.finish_reason
+
+              // 检查是否被内容过滤拒绝
+              if (finishReason === 'content_filter' || finishReason === 'safety') {
+                console.error('⚠️ DeepSeek内容被安全过滤器拒绝, finish_reason:', finishReason)
+                console.error('完整响应:', JSON.stringify(parsed, null, 2))
+              }
+
               if (content) {
                 responseContent += content
                 // 发送流式内容

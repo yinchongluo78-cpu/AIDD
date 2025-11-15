@@ -4,6 +4,7 @@ set -e
 SERVER_IP="120.24.22.244"
 SERVER_PORT="2222"
 SERVER_USER="root"
+SERVER_PASSWORD="Lyc001286"
 SERVER_PATH="/root/myproject/lyc2"
 
 echo "🚀 开始部署到服务器 ${SERVER_IP}"
@@ -11,7 +12,7 @@ echo ""
 
 # 部署 API（后端）
 echo "📦 [1/4] 部署 API（后端）..."
-ssh -p ${SERVER_PORT} ${SERVER_USER}@${SERVER_IP} << 'ENDSSH'
+sshpass -p "${SERVER_PASSWORD}" ssh -p ${SERVER_PORT} -o StrictHostKeyChecking=no ${SERVER_USER}@${SERVER_IP} << 'ENDSSH'
 set -e
 cd /root/myproject/lyc2
 git fetch --all
@@ -34,7 +35,7 @@ ENDSSH
 
 # 部署 Web（前端）
 echo "📦 [2/4] 部署 Web（前端）..."
-ssh -p ${SERVER_PORT} ${SERVER_USER}@${SERVER_IP} << 'ENDSSH'
+sshpass -p "${SERVER_PASSWORD}" ssh -p ${SERVER_PORT} -o StrictHostKeyChecking=no ${SERVER_USER}@${SERVER_IP} << 'ENDSSH'
 set -e
 cd /root/myproject/lyc2/web
 pnpm install --prefer-offline
@@ -49,7 +50,7 @@ ENDSSH
 
 # 重载 Nginx
 echo "🔄 [3/4] 重载 Nginx..."
-ssh -p ${SERVER_PORT} ${SERVER_USER}@${SERVER_IP} "sudo nginx -t && sudo systemctl reload nginx"
+sshpass -p "${SERVER_PASSWORD}" ssh -p ${SERVER_PORT} -o StrictHostKeyChecking=no ${SERVER_USER}@${SERVER_IP} "sudo nginx -t && sudo systemctl reload nginx"
 
 echo ""
 echo "✅ 部署完成！"

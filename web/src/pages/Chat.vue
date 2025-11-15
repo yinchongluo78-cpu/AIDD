@@ -99,8 +99,8 @@
                 </div>
               </div>
               <div class="message-text">
-                <!-- 用户消息：只处理换行，不进行数学公式渲染 -->
-                <span v-if="msg.role === 'user'" v-html="msg.content.replace(/\n/g, '<br>')"></span>
+                <!-- 用户消息：只处理换行，不进行数学公式渲染，过滤OCR内容 -->
+                <span v-if="msg.role === 'user'" v-html="cleanUserMessage(msg.content)"></span>
                 <!-- AI消息：流式传输中和完成后都进行完整的格式化处理 -->
                 <span v-else v-html="formatMessage(msg.content)"></span>
                 <span v-if="msg.isStreaming" class="typing-cursor">▊</span>
@@ -682,6 +682,17 @@ const selectConversation = async (id: string) => {
 const sendMessage = async () => {
   if (!inputMessage.value.trim() && !uploadedImage.value && !uploadedDoc.value) return
   if (isLoading.value) return
+
+  // 🔥 检查是否有当前对话，如果没有则自动创建
+  if (!currentConversationId.value) {
+    console.warn('⚠️ 当前没有选中对话，自动创建新对话')
+    await createNewChat()
+    // 等待对话创建完成后再继续
+    if (!currentConversationId.value) {
+      alert('创建对话失败，请刷新页面重试')
+      return
+    }
+  }
 
   // 检查图片是否还在上传中
   if (uploadedImage.value?.uploading) {
@@ -1529,9 +1540,18 @@ marked.use(
 
 
 
+/**
+ * 清理用户消息，移除OCR识别内容
+ */
+const cleanUserMessage = (content: string) => {
+  if (!content) return ''
 
+  // 移除【图片识别内容】部分（包括标题和后面的内容）
+  let cleaned = content.replace(/\n\n【图片识别内容】\n[\s\S]*$/, '')
 
-
+  // 处理换行符
+  return cleaned.replace(/\n/g, '<br>')
+}
 
 const formatMessage = (content: string) => {
   if (!content) return ''

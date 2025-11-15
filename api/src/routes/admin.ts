@@ -1379,7 +1379,7 @@ router.post('/users/:id/assessment-report', async (req, res) => {
       throw new Error('DeepSeek API 调用失败')
     }
 
-    const data = await response.json()
+    const data: any = await response.json()
     const report = data.choices?.[0]?.message?.content
 
     if (!report) {

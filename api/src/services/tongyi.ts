@@ -40,7 +40,7 @@ export async function analyzeImage(imageUrl: string, prompt: string = '请分析
     const response = await axios.post(
       TONGYI_API_URL,
       {
-        model: 'qwen-vl-plus',
+        model: 'qwen-vl-max',  // 升级到max版本，识别能力更强
         input: {
           messages: [
             {
@@ -53,7 +53,7 @@ export async function analyzeImage(imageUrl: string, prompt: string = '请分析
           ]
         },
         parameters: {
-          max_tokens: 1500
+          max_tokens: 3000  // 增加到3000，确保能完整识别复杂题目
         }
       },
       {
@@ -89,7 +89,13 @@ export async function analyzeImage(imageUrl: string, prompt: string = '请分析
 }
 
 export async function analyzeHomework(imageUrl: string, userQuestion?: string): Promise<string> {
-  let prompt = `请识别这张图片中的所有文字内容，包括题目、公式、文字说明等。如果有数学公式，请用LaTeX格式表示。`
+  let prompt = `请完整、准确地识别这张图片中的所有文字内容，包括：
+1. 题目描述（包括所有条件和背景）
+2. 所有问题（如"问题1"、"问题2"、"问题3"等，一个都不要遗漏）
+3. 所有数学公式（用LaTeX格式表示）
+4. 所有文字说明和注释
+
+⚠️ 重要：请确保识别完整，不要遗漏任何问题或内容，特别是有多个小问的题目。`
 
   if (userQuestion) {
     prompt += `\n\n用户的问题：${userQuestion}`
