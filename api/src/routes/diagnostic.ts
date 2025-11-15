@@ -20,13 +20,15 @@ router.get('/onboarding/status', authenticateToken, async (req: AuthRequest, res
     if (!profile) {
       return res.json({
         hasCompleted: false,
-        currentStep: 0
+        currentStep: 0,
+        shouldShowTestModal: true  // 新用户显示引导
       })
     }
 
     res.json({
       hasCompleted: profile.hasCompletedTutorial,
-      currentStep: profile.tutorialStep
+      currentStep: profile.tutorialStep,
+      shouldShowTestModal: !profile.hasCompletedTutorial  // 未完成教程时显示
     })
   } catch (error) {
     console.error('获取引导状态错误:', error)

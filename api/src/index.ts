@@ -11,6 +11,7 @@ import chatRoutes from './routes/chat'
 import uploadRoutes from './routes/upload'
 import adminRoutes from './routes/admin'
 import diagnosticRoutes from './routes/diagnostic'
+import assessmentRoutes from './routes/assessment'
 
 dotenv.config()
 
@@ -49,6 +50,7 @@ app.use('/api/chat', chatRoutes)
 app.use('/api/upload', uploadRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/diagnostic', diagnosticRoutes)
+app.use('/api/assessment', assessmentRoutes)
 
 app.listen(PORT, () => {
   console.log(`后端服务运行在 http://localhost:${PORT}`)

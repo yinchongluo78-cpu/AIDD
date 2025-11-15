@@ -100,7 +100,7 @@ const handleSubmit = async (e: Event) => {
       email: form.value.email
     })
 
-    const endpoint = mode.value === 'login' ? '/api/auth/login' : '/api/auth/register'
+    const endpoint = mode.value === 'login' ? '/auth/login' : '/auth/register'
     console.log('Endpoint:', endpoint)
 
     const response = await api.post(endpoint, {

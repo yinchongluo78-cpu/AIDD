@@ -407,7 +407,7 @@ const docMenu = ref({
 // 方法
 const loadCategories = async () => {
   try {
-    const response = await api.get('/api/kb/categories')
+    const response = await api.get('/kb/categories')
     categories.value = response.data
 
     // 自动选择第一个分类
@@ -422,7 +422,7 @@ const loadCategories = async () => {
 const selectCategory = async (categoryId: string) => {
   selectedCategoryId.value = categoryId
   try {
-    const response = await api.get(`/api/kb/categories/${categoryId}/documents`)
+    const response = await api.get(`/kb/categories/${categoryId}/documents`)
     documents.value = response.data
 
     // 启动状态检查，如果有pending状态的文档
@@ -465,7 +465,7 @@ const checkProcessingDocumentsProgress = async () => {
   // 并行查询所有processing文档的进度
   const progressPromises = processingDocs.map(async (doc) => {
     try {
-      const progress = await api.get(`/api/kb/documents/${doc.id}/progress`)
+      const progress = await api.get(`/kb/documents/${doc.id}/progress`)
       documentProgresses.value.set(doc.id, progress.data)
 
       console.log(`文档"${doc.filename}"处理进度: ${progress.data.current}/${progress.data.total} (${progress.data.percentage}%)`)
@@ -482,7 +482,7 @@ const refreshDocumentStatus = async () => {
   if (!selectedCategoryId.value) return
 
   try {
-    const response = await api.get(`/api/kb/categories/${selectedCategoryId.value}/documents`)
+    const response = await api.get(`/kb/categories/${selectedCategoryId.value}/documents`)
     const newDocs = response.data
 
     // 只更新状态发生变化的文档
@@ -526,7 +526,7 @@ const addCategory = async () => {
   if (!newCategoryName.value.trim()) return
 
   try {
-    const response = await api.post('/api/kb/categories', {
+    const response = await api.post('/kb/categories', {
       name: newCategoryName.value
     })
     categories.value.push(response.data)
@@ -576,7 +576,7 @@ const handleFileUpload = async (e: Event) => {
       const formData = new FormData()
       formData.append('document', file)
 
-      const uploadResponse = await api.post('/api/upload/document', formData, {
+      const uploadResponse = await api.post('/upload/document', formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         },
@@ -604,7 +604,7 @@ const handleFileUpload = async (e: Event) => {
       uploadProgress.value.percent = 80
       uploadProgress.value.filename = `解析文档: ${file.name}`
 
-      const docResponse = await api.post('/api/kb/documents', docData)
+      const docResponse = await api.post('/kb/documents', docData)
 
       uploadProgress.value.percent = 100
 
@@ -666,7 +666,7 @@ const renameCategory = async () => {
   const newName = prompt('请输入新名称', categoryMenu.value.category.name)
   if (newName && newName !== categoryMenu.value.category.name) {
     try {
-      await api.put(`/api/kb/categories/${categoryMenu.value.category.id}`, {
+      await api.put(`/kb/categories/${categoryMenu.value.category.id}`, {
         name: newName
       })
       categoryMenu.value.category.name = newName
@@ -680,7 +680,7 @@ const deleteCategory = async () => {
   if (!confirm('确定删除这个分类吗？分类下的所有文档也会被删除。')) return
 
   try {
-    await api.delete(`/api/kb/categories/${categoryMenu.value.category.id}`)
+    await api.delete(`/kb/categories/${categoryMenu.value.category.id}`)
     categories.value = categories.value.filter(c => c.id !== categoryMenu.value.category.id)
 
     if (selectedCategoryId.value === categoryMenu.value.category.id) {
@@ -721,7 +721,7 @@ const deleteDocument = async () => {
   if (!confirm('确定删除这个文档吗？')) return
 
   try {
-    await api.delete(`/api/kb/documents/${docMenu.value.document.id}`)
+    await api.delete(`/kb/documents/${docMenu.value.document.id}`)
     documents.value = documents.value.filter(d => d.id !== docMenu.value.document.id)
   } catch (error) {
     console.error('删除文档失败', error)

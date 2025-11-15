@@ -20,6 +20,12 @@
           </svg>
           知识库
         </router-link>
+        <router-link to="/assessment" class="nav-btn" active-class="active">
+          <svg class="icon" viewBox="0 0 24 24" width="20" height="20">
+            <path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 16H9v-2h4v2zm3-4H8v-2h8v2zm0-4H8V8h8v2z" fill="currentColor"/>
+          </svg>
+          测评
+        </router-link>
       </nav>
 
       <div class="header-right">
@@ -46,11 +52,39 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 
-const userInfo = computed(() => {
+// 使用 ref 而不是 computed，这样可以手动触发更新
+const userInfo = ref<any>({})
+
+const loadUserInfo = () => {
   const user = localStorage.getItem('user')
-  return user ? JSON.parse(user) : {}
+  userInfo.value = user ? JSON.parse(user) : {}
+}
+
+// 监听 storage 事件，当其他标签页或组件更新 localStorage 时响应
+const handleStorageChange = (e: StorageEvent) => {
+  if (e.key === 'user' || e.key === null) {
+    loadUserInfo()
+  }
+}
+
+// 监听自定义事件，当同一页面内 localStorage 更新时响应
+const handleCustomStorageUpdate = (e: CustomEvent) => {
+  if (e.detail === 'user') {
+    loadUserInfo()
+  }
+}
+
+onMounted(() => {
+  loadUserInfo()
+  window.addEventListener('storage', handleStorageChange)
+  window.addEventListener('localStorageUpdated', handleCustomStorageUpdate as EventListener)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('storage', handleStorageChange)
+  window.removeEventListener('localStorageUpdated', handleCustomStorageUpdate as EventListener)
 })
 
 const userAvatar = computed(() => {

@@ -111,7 +111,7 @@ const toggleCategory = async (categoryId: string) => {
 const loadCategoryDocuments = async (categoryId: string) => {
   try {
     loadingDocs.value[categoryId] = true
-    const response = await api.get(`/api/kb/categories/${categoryId}/documents`)
+    const response = await api.get(`/kb/categories/${categoryId}/documents`)
     categoryDocuments.value[categoryId] = response.data
   } catch (error) {
     console.error('加载文档失败:', error)
@@ -209,7 +209,7 @@ defineExpose({
 onMounted(async () => {
   try {
     console.log('KnowledgeSelector: 开始加载分类...')
-    const response = await api.get('/api/kb/categories')
+    const response = await api.get('/kb/categories')
     console.log('KnowledgeSelector: 分类数据:', response.data)
     categories.value = response.data
     console.log('KnowledgeSelector: 加载成功，分类数量:', categories.value.length)

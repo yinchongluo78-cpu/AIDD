@@ -6,6 +6,7 @@ import Users from './views/Users.vue'
 import Conversations from './views/Conversations.vue'
 import KnowledgeBase from './views/KnowledgeBase.vue'
 import System from './views/System.vue'
+import Assessment from './views/Assessment.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -40,6 +41,11 @@ const router = createRouter({
           path: '/knowledge-base',
           name: 'KnowledgeBase',
           component: KnowledgeBase
+        },
+        {
+          path: '/assessment',
+          name: 'Assessment',
+          component: Assessment
         },
         {
           path: '/system',

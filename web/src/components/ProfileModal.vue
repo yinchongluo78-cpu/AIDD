@@ -301,7 +301,7 @@ const currentAvatar = computed(() => selectedAvatar.value || defaultAvatar)
 // 获取用户信息
 const fetchUserInfo = async () => {
   try {
-    const response = await api.get('/api/users/profile')
+    const response = await api.get('/users/profile')
     const userData = response.data
     userForm.value = {
       nickname: userData.name || '',
@@ -321,7 +321,7 @@ const fetchUserInfo = async () => {
 const fetchDiagnosticStatus = async () => {
   try {
     console.log('🔍 开始获取诊断测试状态...')
-    const response = await api.get('/api/diagnostic/my-status')
+    const response = await api.get('/diagnostic/my-status')
     console.log('✅ 诊断测试状态API响应:', response)
     console.log('   - response.data:', response.data)
     console.log('   - completionRate:', response.data?.completionRate)
@@ -374,7 +374,7 @@ const handleClose = () => {
 const handleSave = async () => {
   saving.value = true
   try {
-    await api.put('/api/users/profile', {
+    await api.put('/users/profile', {
       name: userForm.value.nickname,
       age: userForm.value.age,
       grade: userForm.value.grade,
@@ -392,6 +392,17 @@ const handleSave = async () => {
       location: userForm.value.location
     }
     localStorage.setItem('userInfo', JSON.stringify(userInfo))
+
+    // 同时更新 'user' 键，让 AppLayout 能读到昵称
+    const currentUser = localStorage.getItem('user')
+    if (currentUser) {
+      const user = JSON.parse(currentUser)
+      user.nickname = userForm.value.nickname
+      localStorage.setItem('user', JSON.stringify(user))
+    }
+
+    // 触发自定义事件，通知 AppLayout 更新用户信息显示
+    window.dispatchEvent(new CustomEvent('localStorageUpdated', { detail: 'user' }))
 
     emit('saved')
     handleClose()

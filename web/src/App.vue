@@ -14,7 +14,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import api from './api'
 import DiagnosticModal from './components/DiagnosticModal.vue'
@@ -22,6 +22,7 @@ import DiagnosticModal from './components/DiagnosticModal.vue'
 const router = useRouter()
 const route = useRoute()
 const showDiagnosticModal = ref(false)
+const hasCheckedOnboarding = ref(false) // 添加标记，避免同一会话中重复检查
 
 let sessionId: string | null = null
 let heartbeatInterval: number | null = null
@@ -32,7 +33,7 @@ const startSession = async () => {
   if (!token) return
 
   try {
-    const response = await api.post('/api/users/session/start')
+    const response = await api.post('/users/session/start')
     sessionId = response.sessionId
     console.log('会话已启动:', sessionId)
 
@@ -48,7 +49,7 @@ const sendHeartbeat = async () => {
   if (!sessionId) return
 
   try {
-    await api.post('/api/users/session/heartbeat', { sessionId })
+    await api.post('/users/session/heartbeat', { sessionId })
     console.log('心跳已发送')
   } catch (error) {
     console.error('发送心跳失败:', error)
@@ -60,7 +61,7 @@ const endSession = async () => {
   if (!sessionId) return
 
   try {
-    await api.post('/api/users/session/end', { sessionId })
+    await api.post('/users/session/end', { sessionId })
     console.log('会话已结束')
   } catch (error) {
     console.error('结束会话失败:', error)
@@ -79,11 +80,16 @@ const checkOnboardingStatus = async () => {
   const token = localStorage.getItem('token')
   if (!token) return
 
+  // 本次会话已经检查过，不再重复检查
+  if (hasCheckedOnboarding.value) return
+
   // 仅在非测试页面显示弹窗
   if (route.path.startsWith('/diagnostic')) return
 
   try {
-    const response = await api.get('/api/diagnostic/onboarding/status')
+    const response = await api.get('/diagnostic/onboarding/status')
+    hasCheckedOnboarding.value = true // 标记已检查
+
     if (response.shouldShowTestModal) {
       // 延迟1秒显示弹窗，避免与页面加载冲突
       setTimeout(() => {
@@ -94,6 +100,14 @@ const checkOnboardingStatus = async () => {
     console.error('检查引导状态失败:', error)
   }
 }
+
+// 监听路由变化，每次进入对话页或知识库页时检查引导状态
+watch(() => route.path, (newPath) => {
+  const token = localStorage.getItem('token')
+  if (token && (newPath === '/chat' || newPath === '/kb')) {
+    checkOnboardingStatus()
+  }
+})
 
 onMounted(() => {
   // 检查是否已登录，如果已登录则启动会话

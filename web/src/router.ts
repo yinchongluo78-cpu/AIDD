@@ -3,6 +3,9 @@ import Chat from './pages/Chat.vue'
 import Kb from './pages/Kb.vue'
 import Login from './pages/Login.vue'
 import DiagnosticTest from './pages/DiagnosticTest.vue'
+import AssessmentCenter from './pages/AssessmentCenter.vue'
+import AssessmentTest from './pages/AssessmentTest.vue'
+import DailyAssessment from './pages/DailyAssessment.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -35,6 +38,24 @@ const router = createRouter({
       path: '/diagnostic/:slug',
       name: 'DiagnosticTest',
       component: DiagnosticTest,
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/assessment',
+      name: 'AssessmentCenter',
+      component: AssessmentCenter,
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/assessment/daily',
+      name: 'DailyAssessment',
+      component: DailyAssessment,
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/assessment/:slug',
+      name: 'AssessmentTest',
+      component: AssessmentTest,
       meta: { requiresAuth: true }
     }
   ]

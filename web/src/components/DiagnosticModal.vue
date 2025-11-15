@@ -76,7 +76,7 @@ const modules = ref<DiagnosticModule[]>([])
 // 获取测试模块列表
 const fetchModules = async () => {
   try {
-    const response = await api.get('/api/diagnostic/modules')
+    const response = await api.get('/diagnostic/modules')
     modules.value = response.modules
   } catch (error) {
     console.error('获取测试模块失败:', error)
@@ -86,7 +86,7 @@ const fetchModules = async () => {
 const handleSkip = async () => {
   try {
     // 记录用户跳过了测试弹窗
-    await api.post('/api/diagnostic/onboarding/skip')
+    await api.post('/diagnostic/onboarding/skip')
     emit('skip')
     emit('close')
   } catch (error) {
@@ -99,7 +99,7 @@ const handleSkip = async () => {
 const handleStart = async () => {
   try {
     // 记录用户开始测试
-    await api.post('/api/diagnostic/onboarding/start')
+    await api.post('/diagnostic/onboarding/start')
     emit('start')
     emit('close')
     // 跳转到第一个测试

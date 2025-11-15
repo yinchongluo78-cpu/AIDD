@@ -41,6 +41,14 @@
                 {{ formatTime(row.createdAt) }}
               </template>
             </el-table-column>
+            <el-table-column label="操作" width="100" fixed="right">
+              <template #default="{ row }">
+                <el-button type="primary" text @click="downloadDocument(row)" :loading="downloadingIds.includes(row.id)">
+                  <el-icon><Download /></el-icon>
+                  下载
+                </el-button>
+              </template>
+            </el-table-column>
           </el-table>
 
           <div class="pagination">
@@ -50,7 +58,7 @@
               :total="docTotal"
               layout="prev, pager, next"
               @current-change="loadDocuments"
-              small
+              size="small"
             />
           </div>
         </el-card>
@@ -84,7 +92,7 @@
               :total="catTotal"
               layout="prev, pager, next"
               @current-change="loadCategories"
-              small
+              size="small"
             />
           </div>
         </el-card>
@@ -121,7 +129,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, Download } from '@element-plus/icons-vue'
 import api from '../api'
 import { ElMessage } from 'element-plus'
 
@@ -147,6 +155,7 @@ const catPage = ref(1)
 const catTotal = ref(0)
 
 const usage = ref([])
+const downloadingIds = ref<string[]>([])
 
 const loadData = () => {
   loadStats()
@@ -223,6 +232,49 @@ const formatSize = (bytes: number) => {
   const sizes = ['B', 'KB', 'MB', 'GB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
+}
+
+const downloadDocument = async (doc: any) => {
+  downloadingIds.value.push(doc.id)
+  try {
+    // 获取 API 基础 URL (已包含 /api)
+    const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api'
+    const downloadUrl = `${baseURL}/admin/knowledge-base/documents/${doc.id}/download`
+
+    // 使用 fetch 下载文件（携带 Authorization 头）
+    const response = await fetch(downloadUrl, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`
+      }
+    })
+
+    if (!response.ok) {
+      throw new Error('下载失败')
+    }
+
+    // 获取文件内容
+    const blob = await response.blob()
+
+    // 创建下载链接
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = doc.fileName
+    link.style.display = 'none'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+
+    // 释放URL对象
+    window.URL.revokeObjectURL(url)
+
+    ElMessage.success('下载成功')
+  } catch (error) {
+    console.error('下载文档失败:', error)
+    ElMessage.error('下载文档失败')
+  } finally {
+    downloadingIds.value = downloadingIds.value.filter(id => id !== doc.id)
+  }
 }
 
 onMounted(() => {
