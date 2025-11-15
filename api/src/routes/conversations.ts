@@ -111,6 +111,7 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
     const aiModel = model || 'deepseek' // 默认使用DeepSeek
 
     console.log('=== 流式响应接收到的参数 ===')
+    console.log('conversationId:', conversationId, 'type:', typeof conversationId)
     console.log('content长度:', content?.length || 0)
     console.log('categoryId:', categoryId || 'none')
     console.log('documentIds:', documentIds || 'none')
