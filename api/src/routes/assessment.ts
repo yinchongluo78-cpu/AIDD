@@ -118,7 +118,7 @@ router.get('/module/:slug/questions', authenticateToken, async (req: AuthRequest
 // ==================== 3. 创建新的测评记录 ====================
 router.post('/attempt', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.userId
+    const userId = req.userId!
     const { moduleId } = req.body
 
     if (!moduleId) {
@@ -335,7 +335,7 @@ router.get('/daily-status', authenticateToken, async (req: AuthRequest, res: Res
 // ==================== 7. 每日测评题目 ====================
 router.get('/daily/questions', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.userId
+    const userId = req.userId!
 
     // 找到每日测评模块（约定 slug 为 'daily_knowledge'）
     const dailyModule = await prisma.assessmentModule.findFirst({

@@ -320,7 +320,7 @@ export async function getUserAssessmentSummary(userId: string) {
     if (hoursSinceUpdate < 24) {
       // 返回缓存的摘要
       return {
-        ...profile.traitsJson,
+        ...(profile.traitsJson as object || {}),
         dailyProgress: profile.dailyProgressJson,
         learningStyle: profile.learningStyleJson,
         difficultyLevel: profile.difficultyLevelJson
