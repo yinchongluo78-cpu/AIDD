@@ -311,27 +311,35 @@ export async function searchDocumentChunks(
     const isSummaryQuery = /讲了什么|有什么内容|主要内容|总结|概括|介绍|大纲|目录/.test(query)
 
     if (isSummaryQuery && documentIds && documentIds.length > 0) {
-      console.log('🔍 检测到概述性问题，返回文档开头部分供大模型理解')
+      console.log('🔍 检测到概述性问题，从每个文档中返回代表性切片')
 
-      // 返回文档开头部分，让大模型基于完整内容回答
-      const summaryChunks = await prisma.kbChunk.findMany({
-        where: {
-          document: {
-            id: {
-              in: documentIds
+      // 🔥 修复：确保每个文档都有代表性切片
+      // 从每个文档中取前2个切片，这样所有文档都能被包含
+      const chunksPerDocument = Math.max(2, Math.floor(limit / documentIds.length))
+      console.log(`每个文档取 ${chunksPerDocument} 个切片，共 ${documentIds.length} 个文档`)
+
+      const summaryChunks: any[] = []
+
+      for (const docId of documentIds) {
+        const docChunks = await prisma.kbChunk.findMany({
+          where: {
+            document: {
+              id: docId
             }
-          }
-        },
-        include: {
-          document: true
-        },
-        orderBy: {
-          seq: 'asc'
-        },
-        take: limit * 2 // 概述性问题返回更多内容
-      })
+          },
+          include: {
+            document: true
+          },
+          orderBy: {
+            seq: 'asc'
+          },
+          take: chunksPerDocument
+        })
 
-      console.log(`返回 ${summaryChunks.length} 个文档开头切片供大模型分析`)
+        summaryChunks.push(...docChunks)
+      }
+
+      console.log(`返回 ${summaryChunks.length} 个切片，覆盖 ${documentIds.length} 个文档`)
 
       return summaryChunks.map(chunk => ({
         chunk,

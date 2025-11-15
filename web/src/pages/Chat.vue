@@ -473,8 +473,8 @@
 
 <script setup lang="ts">
 // 🔥🔥🔥 版本标记 - 2025-11-15 12:05 - 移除默认选中第一条对话 🔥🔥🔥
-console.log('%c🔥 Chat.vue 已加载 - 版本: 2025-11-15-14:05 🎉 🔥', 'color: #ff6b6b; font-size: 16px; font-weight: bold;')
-console.log('%c移除默认选中第一条对话，用户主动点击才高亮', 'color: #4ecdc4; font-size: 14px;')
+console.log('%c🔥 Chat.vue 已加载 - 版本: 2025-11-15-15:40 🎯 单一高亮 🔥', 'color: #ff6b6b; font-size: 16px; font-weight: bold;')
+console.log('%c登录时自动选中第一条，点击时切换高亮，始终只有一条高亮', 'color: #4ecdc4; font-size: 14px;')
 
 import { ref, computed, onMounted, onActivated, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
@@ -1662,8 +1662,8 @@ const stopGeneration = () => {
 
 // 个人资料保存后的回调
 const onProfileSaved = () => {
-  // 强制刷新用户信息
-  window.location.reload()
+  // 个人资料已保存，AppLayout 会通过 localStorageUpdated 事件自动更新显示
+  console.log('✅ 个人资料已保存')
 }
 
 // 处理重新查看引导
@@ -1725,10 +1725,14 @@ onMounted(async () => {
       console.error('加载知识库分类失败:', error)
     }
 
-    // 🔥 不再自动选中第一条对话，让用户主动点击选择
-    // 如果没有任何对话，则创建一个新对话（但不自动选中）
+    // 🎯 用户刚登录时，自动选中第一条对话（如果有对话的话）
     if (conversations.value.length === 0) {
+      // 如果没有任何对话，创建一个新对话
       await createNewChat()
+      // createNewChat 会自动设置 currentConversationId
+    } else {
+      // 如果有对话，自动选中第一条
+      await selectConversation(conversations.value[0].id)
     }
 
     // 检查是否有待处理的文档（从知识库跳转过来）
@@ -1923,24 +1927,6 @@ document.addEventListener('click', () => {
 .chat-item.active .chat-title {
   color: #ffd700;
   font-weight: 500;
-}
-
-.chat-item:first-child:not(.has-messages) {
-  background: linear-gradient(135deg, rgba(255, 215, 0, 0.2) 0%, rgba(255, 237, 78, 0.1) 100%);
-  border-color: rgba(255, 215, 0, 0.4);
-  animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-  0% {
-    box-shadow: 0 0 10px rgba(255, 215, 0, 0.2);
-  }
-  50% {
-    box-shadow: 0 0 20px rgba(255, 215, 0, 0.3);
-  }
-  100% {
-    box-shadow: 0 0 10px rgba(255, 215, 0, 0.2);
-  }
 }
 
 .chat-item-content {

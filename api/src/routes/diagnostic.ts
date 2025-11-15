@@ -106,4 +106,20 @@ router.post('/onboarding/reset', authenticateToken, async (req: AuthRequest, res
   }
 })
 
+// 获取诊断测试状态
+router.get('/my-status', authenticateToken, async (req: AuthRequest, res) => {
+  try {
+    // 暂时返回空的测试状态
+    // TODO: 未来可以从数据库查询用户的诊断测试完成情况
+    res.json({
+      completionRate: 0,
+      allCompleted: false,
+      tests: []
+    })
+  } catch (error) {
+    console.error('获取诊断测试状态错误:', error)
+    res.status(500).json({ message: '获取诊断测试状态失败' })
+  }
+})
+
 export default router
