@@ -1,7 +1,5 @@
 import { ref, Ref } from 'vue'
-import axios from 'axios'
-
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3001'
+import api from '../api'
 
 // 引导步骤定义
 export interface TutorialStep {
@@ -99,7 +97,7 @@ export function useTutorial() {
       const token = localStorage.getItem('token')
       if (!token) return
 
-      const response = await axios.get(`${API_BASE}/api/diagnostic/onboarding/status`, {
+      const response = await api.get('/diagnostic/onboarding/status', {
         headers: { Authorization: `Bearer ${token}` }
       })
 
@@ -118,7 +116,7 @@ export function useTutorial() {
 
       // 如果标记为完成，调用完成接口
       if (completed) {
-        await axios.post(`${API_BASE}/api/diagnostic/onboarding/complete`, {}, {
+        await api.post('/diagnostic/onboarding/complete', {}, {
           headers: { Authorization: `Bearer ${token}` }
         })
         hasCompletedTutorial.value = true
@@ -126,7 +124,7 @@ export function useTutorial() {
       }
       // 否则更新进度
       else if (step !== undefined) {
-        await axios.post(`${API_BASE}/api/diagnostic/onboarding/progress`,
+        await api.post('/diagnostic/onboarding/progress',
           { step },
           { headers: { Authorization: `Bearer ${token}` } }
         )
@@ -142,6 +140,10 @@ export function useTutorial() {
     currentSteps.value = steps
     currentStep.value = 0
     isActive.value = true
+
+    // 🔥 关键修改：首次显示时立即标记为"已显示过"
+    // 使用 localStorage 作为备份机制
+    localStorage.setItem('tutorial_shown', 'true')
   }
 
   // 下一步
@@ -165,12 +167,14 @@ export function useTutorial() {
   // 跳过引导
   const skipTutorial = () => {
     isActive.value = false
+    localStorage.setItem('tutorial_shown', 'true')
     updateTutorialStatus(0, true)
   }
 
   // 完成引导
   const completeTutorial = () => {
     isActive.value = false
+    localStorage.setItem('tutorial_shown', 'true')
     updateTutorialStatus(currentSteps.value.length, true)
   }
 
@@ -190,7 +194,7 @@ export function useTutorial() {
       const token = localStorage.getItem('token')
       if (!token) return
 
-      await axios.post(`${API_BASE}/api/diagnostic/onboarding/reset`, {}, {
+      await api.post('/diagnostic/onboarding/reset', {}, {
         headers: { Authorization: `Bearer ${token}` }
       })
 
@@ -198,6 +202,9 @@ export function useTutorial() {
       tutorialStep.value = 0
       isActive.value = false
       currentStep.value = 0
+
+      // 🔥 清除 localStorage 标记，允许重新显示引导
+      localStorage.removeItem('tutorial_shown')
     } catch (error) {
       console.error('重置引导状态失败:', error)
     }
