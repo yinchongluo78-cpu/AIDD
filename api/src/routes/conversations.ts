@@ -292,15 +292,39 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
           kbContext += '✅ 只有用户明确说"讲一下XXX"时，才使用这些资料。\n\n'
         }
 
-        relevantChunks.forEach((item, index) => {
-          kbContext += `【资料 ${index + 1}/${relevantChunks.length}：${item.document.filename}】\n`
-          kbContext += item.chunk.content + '\n\n'
+        // 🔥 修复：按文档分组，避免把切片当成独立资料
+        const documentMap = new Map<string, {
+          document: any,
+          chunks: any[]
+        }>()
 
-          // 🔥 修复：记录引用信息，确保不重复
-          const citationText = `${item.document.filename} - 片段${index + 1}`
+        relevantChunks.forEach(item => {
+          const docId = item.document.id
+          if (!documentMap.has(docId)) {
+            documentMap.set(docId, {
+              document: item.document,
+              chunks: []
+            })
+          }
+          documentMap.get(docId)!.chunks.push(item.chunk)
+        })
+
+        // 按文档编号输出（同一文档的多个切片共用一个资料编号）
+        let materialIndex = 1
+        documentMap.forEach((docData) => {
+          kbContext += `【资料 ${materialIndex}：${docData.document.filename}】\n`
+
+          docData.chunks.forEach(chunk => {
+            kbContext += chunk.content + '\n\n'
+          })
+
+          // 记录引用信息（不重复）
+          const citationText = `${docData.document.filename}`
           if (!citations.includes(citationText)) {
             citations.push(citationText)
           }
+
+          materialIndex++
         })
         kbContext += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
 
@@ -448,11 +472,19 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
    - 如果知识点涉及多个公式或情景，必须全部列出，不要遗漏
    - 突出 **易错点** 和 **注意事项**
 
-5️⃣ **知识库内容使用要求：**
-   - 如果下方提供了【备用资料库】内容，且用户明确要求学习某知识点
-   - 必须**综合所有资料片段**回答，不要只用前1-2个片段
-   - 如果某知识点有多个公式/定理/例题，必须全部包含
-   - 示例：如果资料中有5条公式，回答时要列出所有5条，而不是只说2条
+5️⃣ **知识库内容使用要求（严格遵守）：**
+   ⚠️ **如果用户消息中包含【资料 1】【资料 2】等标记：**
+   - ✅ **必须严格基于提供的资料内容回答，不得编造任何信息**
+   - ✅ **每个资料片段的内容都要认真阅读，准确总结**
+   - ✅ **如果用户要求列举/总结资料内容，必须如实反映实际资料**
+   - ❌ **绝对禁止**：凭空编造资料内容、自己想象资料是什么
+   - ❌ **绝对禁止**：看到"数学"就编数学题，看到"物理"就编物理知识
+
+   📝 **正确做法**：仔细阅读【资料 X】标记后的实际文本内容，如实总结
+   - 如果资料是数学题，就总结数学题
+   - 如果资料是使用指南，就总结使用指南
+   - 如果资料是历史文献，就总结历史文献
+   - **资料内容是什么，就总结什么，不要猜测或编造**
 
 6. **回复格式与排版规范：**
 
