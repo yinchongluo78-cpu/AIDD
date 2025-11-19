@@ -97,8 +97,27 @@ model Conversation {
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages Message[]
+  shares   SharedConversation[]
 
   @@map("conversations")
+  @@index([userId, createdAt])
+}
+
+model SharedConversation {
+  id             String    @id @default(uuid()) @db.Uuid
+  conversationId String    @db.Uuid @map("conversation_id")
+  userId         String    @db.Uuid @map("user_id")
+  shareId        String    @unique @map("share_id")  // 短随机ID用于URL
+  title          String?
+  isActive       Boolean   @default(true) @map("is_active")
+  viewCount      Int       @default(0) @map("view_count")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  expiresAt      DateTime? @map("expires_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@map("shared_conversations")
+  @@index([shareId])
   @@index([userId, createdAt])
 }
 
@@ -106,7 +125,8 @@ model Message {
   id              String    @id @default(uuid()) @db.Uuid
   conversationId  String    @db.Uuid @map("conversation_id")
   role            String
-  content         String
+  content         String                          // 原始 Markdown + LaTeX 文本
+  htmlContent     String?   @map("html_content")  // 后端渲染的 HTML（教科书风格）
   imageOssKey     String?   @map("image_oss_key")
   ocrText         String?   @map("ocr_text")
   citations       Json?

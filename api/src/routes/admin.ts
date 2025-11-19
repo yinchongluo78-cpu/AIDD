@@ -3,6 +3,7 @@ import { prisma } from '../index'
 import { syncAllToFeishu } from '../services/feishuSync'
 import { generateAssessmentSummary } from '../services/assessmentSummary'
 import OSS from 'ali-oss'
+import { getFullMathStyleSpec } from '../prompts/mathStyle'
 
 const router = express.Router()
 
@@ -1280,19 +1281,17 @@ ${assessmentContext}
 【严格禁止HTML】
 绝对不要输出任何HTML标签，包括但不限于：<p>、<div>、<span>、<strong>、<em>、<h1>、<h2>、<h3>、<br>、<ul>、<li>、<ol>等。
 
+${getFullMathStyleSpec()}
+
 【输出格式要求】
 1. 只使用纯文本和Markdown语法
-2. **数学公式统一使用LaTeX格式：**
-   - 行内公式用 $...$ （例如：$E=mc^2$）
-   - 独立公式用 $$...$$ （例如：$$x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}$$）
-   - 化学式用 LaTeX（例如：$\\ce{H2O}$、$\\ce{CO2}$）
-3. **结构化输出：**
+2. **结构化输出：**
    - 粗体用 **文字**，斜体用 *文字*
    - 标题用 ### （三级标题分隔不同知识点）
    - 代码块用 \`\`\`语言\\n代码\\n\`\`\`
    - 列表用 - 或 1.
    - 每个知识点之间加空行
-4. **回答要求：**
+3. **回答要求：**
    - 如果涉及多个公式或情景，必须全部列出，不要遗漏
    - 突出 **易错点** 和 **注意事项**
    - 答案要完整、准确
@@ -1300,15 +1299,15 @@ ${assessmentContext}
 【示例输出】
 ### 二次方程求根公式
 
-求解方程 $ax^2+bx+c=0$ 时，使用求根公式：
+求解方程 ax^2 + bx + c = 0 时，使用求根公式：
 
-$$x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}$$
+x = \\frac{-b ± \\sqrt{b^2-4ac}}{2a}
 
 **注意事项：**
-- 判别式 $\\Delta = b^2-4ac$ 决定根的性质
-- $\\Delta > 0$ 时有两个不相等的实根
-- $\\Delta = 0$ 时有两个相等的实根
-- $\\Delta < 0$ 时无实根
+- 判别式 Δ = b^2 - 4ac 决定根的性质
+- Δ > 0 时有两个不相等的实根
+- Δ = 0 时有两个相等的实根
+- Δ < 0 时无实根
 
 请严格遵守以上规则，绝不输出HTML标签。`
 }

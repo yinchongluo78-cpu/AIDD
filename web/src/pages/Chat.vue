@@ -101,8 +101,12 @@
               <div class="message-text">
                 <!-- 用户消息：只处理换行，不进行数学公式渲染，过滤OCR内容 -->
                 <span v-if="msg.role === 'user'" v-html="cleanUserMessage(msg.content)"></span>
-                <!-- AI消息：流式传输中和完成后都进行完整的格式化处理 -->
-                <span v-else v-html="formatMessage(msg.content)"></span>
+                <!-- 🔥 AI消息：优先使用后端渲染的 htmlContent（教科书风格），回退到前端渲染 -->
+                <span v-else>
+                  <!-- 实际渲染 -->
+                  <div v-if="msg.htmlContent" v-html="msg.htmlContent"></div>
+                  <div v-else v-html="formatMessage(msg.content)"></div>
+                </span>
                 <span v-if="msg.isStreaming" class="typing-cursor">▊</span>
               </div>
             </div>
@@ -238,8 +242,17 @@
         @click="contextMenu.show = false"
       >
         <div class="menu-item" @click="renameConversation">重命名</div>
+        <div class="menu-item" @click="openShareModal">分享对话</div>
         <div class="menu-item danger" @click="deleteConversation">删除</div>
       </div>
+
+      <!-- 分享弹窗 -->
+      <ShareModal
+        :visible="shareModalVisible"
+        :conversationId="shareConversationId"
+        @close="closeShareModal"
+        @unshared="handleUnshared"
+      />
 
       <!-- 图片预览模态框 -->
       <div v-if="imageModalUrl" class="image-modal-overlay" @click="closeImageModal">
@@ -483,6 +496,7 @@ import UserProfile from '../components/UserProfile.vue'
 import ProfileModal from '../components/ProfileModal.vue'
 import KnowledgeSelector from '../components/KnowledgeSelector.vue'
 import TutorialGuide from '../components/TutorialGuide.vue'
+import ShareModal from '../components/ShareModal.vue'
 import api from '../api'
 import { useTutorial } from '../composables/useTutorial'
 import { marked } from 'marked'
@@ -611,8 +625,27 @@ const selectConversation = async (id: string) => {
   currentConversationId.value = id
   try {
     const response = await api.get(`/conversations/${id}/messages`)
-    // 处理历史消息，提取文档信息并清理显示内容
-    currentMessages.value = response.data.map(msg => {
+
+    // 🔥 后端重构：所有消息现在都带有 htmlContent（后端统一渲染）
+    console.log('📥 收到历史消息:', response.data.length, '条')
+
+    const firstAssistant = response.data.find(m => m.role === 'assistant')
+    if (firstAssistant) {
+      console.log('📋 第一条AI消息示例:')
+      console.log('  - ID:', firstAssistant.id)
+      console.log('  - role:', firstAssistant.role)
+      console.log('  - htmlContent 存在:', !!firstAssistant.htmlContent)
+      console.log('  - htmlContent 长度:', firstAssistant.htmlContent?.length || 0)
+      console.log('  - htmlContent 前100字符:', firstAssistant.htmlContent?.substring(0, 100))
+      console.log('  - content 长度:', firstAssistant.content?.length || 0)
+    }
+
+    // 处理历史消息，提取文档信息
+    currentMessages.value = response.data.map((msg, index) => {
+      if (msg.role === 'assistant') {
+        console.log(`[消息${index}] Assistant消息 htmlContent:`, !!msg.htmlContent, '长度:', msg.htmlContent?.length || 0)
+      }
+
       if (msg.role === 'user' && msg.content.includes('[文档:')) {
         // 提取文档信息
         const docMatch = msg.content.match(/\[文档: (.+?)\]/)
@@ -632,47 +665,16 @@ const selectConversation = async (id: string) => {
             isStreaming: false
           }
         }
-      } else if (msg.role === 'assistant') {
-        // 对AI消息进行清理，移除旧的占位符
-        let cleanContent = msg.content
-        
-        // 检查是否包含占位符
-        const hasPlaceholders = /MATH_PLACEHOLDER_\d+|MATHBLOCK\d+|MATHINLINE\d+/.test(cleanContent)
-        
-        if (hasPlaceholders) {
-          console.log('发现历史消息包含占位符，进行清理:', msg.id)
-          
-          // 清理所有类型的占位符
-          cleanContent = cleanContent.replace(/MATH_PLACEHOLDER_\d+/g, '[数学公式]')
-          cleanContent = cleanContent.replace(/MATHBLOCK\d+/g, '[数学公式]')
-          cleanContent = cleanContent.replace(/MATHINLINE\d+/g, '[数学公式]')
-          
-          // 清理可能的HTML标签残留
-          cleanContent = cleanContent.replace(/<div class="math-block">\s*<\/div>/g, '[数学公式]')
-          cleanContent = cleanContent.replace(/<span class="math-inline">\s*<\/span>/g, '[数学公式]')
-        }
-        
-        // 如果内容仍然包含数学公式，重新处理
-        if (cleanContent.includes('$')) {
-          console.log('重新处理历史AI消息中的数学公式')
-          try {
-            cleanContent = formatMessage(cleanContent)
-          } catch (error) {
-            console.error('重新处理历史消息失败:', error)
-          }
-        }
-        
-        return {
-          ...msg,
-          content: cleanContent,
-          isStreaming: false // 确保历史消息不是流式状态
-        }
       }
+
+      // 🔥 所有消息（包括 AI）直接使用，htmlContent 由后端提供
+      // 不再需要前端清理占位符或重新渲染数学公式
       return {
         ...msg,
         isStreaming: false // 确保所有历史消息都不是流式状态
       }
     })
+
     scrollToBottom()
   } catch (error) {
     console.error('加载消息失败', error)
@@ -749,6 +751,7 @@ const sendMessage = async () => {
     id: assistantMessageId,
     role: 'assistant',
     content: '',
+    htmlContent: null,  // 🔥 初始化 htmlContent 字段以确保 Vue 响应式跟踪
     createdAt: new Date(),
     isStreaming: true
   })
@@ -819,21 +822,37 @@ const sendMessage = async () => {
                     nextTick(() => scrollToBottom())
                   }
                 } else if (data.type === 'done') {
-                  console.log('流式传输完成')
+                  console.log('🎉 流式传输完成')
                   // 更新消息状态
                   const msgIndex = currentMessages.value.findIndex(m => m.id === assistantMessageId)
                   if (msgIndex !== -1) {
-                    // 流式传输完成，更新ID和时间戳
+                    // 🔥 后端重构：流式传输完成后，使用后端返回的完整数据（包含 htmlContent）
                     if (data.data) {
+                      console.log('📦 收到后端完整消息数据:', JSON.stringify(data.data).substring(0, 500))
+                      console.log('📦 data.data.htmlContent 存在:', !!data.data.htmlContent)
+                      console.log('📦 data.data.htmlContent 长度:', data.data.htmlContent?.length || 0)
+                      console.log('📦 data.data.htmlContent 前200字符:', data.data.htmlContent?.substring(0, 200))
+
                       currentMessages.value[msgIndex].id = data.data.id
                       currentMessages.value[msgIndex].createdAt = data.data.createdAt
+                      // ✨ 关键：使用后端渲染的 htmlContent 替代前端处理
+                      currentMessages.value[msgIndex].htmlContent = data.data.htmlContent
+
+                      console.log('✅ htmlContent 已设置到消息对象:', !!currentMessages.value[msgIndex].htmlContent)
+                      console.log('✅ 消息对象:', JSON.stringify({
+                        id: currentMessages.value[msgIndex].id,
+                        role: currentMessages.value[msgIndex].role,
+                        hasHtmlContent: !!currentMessages.value[msgIndex].htmlContent,
+                        htmlContentLength: currentMessages.value[msgIndex].htmlContent?.length || 0,
+                        contentLength: currentMessages.value[msgIndex].content?.length || 0
+                      }))
                     }
-                    // 设置为非流式状态，模板会自动调用formatMessage处理数学公式
+                    // 设置为非流式状态，模板会使用 htmlContent 显示
                     currentMessages.value[msgIndex].isStreaming = false
 
                     // 确保数学公式正确渲染
                     nextTick(() => {
-                      console.log('流式传输完成，数学公式渲染')
+                      console.log('✨ 数学公式已渲染（后端HTML）')
                       scrollToBottom()
                     })
 
@@ -1417,6 +1436,25 @@ const deleteConversation = async () => {
   }
 }
 
+// 分享对话相关
+const shareModalVisible = ref(false)
+const shareConversationId = ref<string | null>(null)
+
+const openShareModal = () => {
+  shareConversationId.value = contextMenu.value.conversation.id
+  shareModalVisible.value = true
+  contextMenu.value.show = false
+}
+
+const closeShareModal = () => {
+  shareModalVisible.value = false
+  shareConversationId.value = null
+}
+
+const handleUnshared = () => {
+  console.log('分享已取消')
+}
+
 // 自定义指令相关函数
 const openInstructionsModal = () => {
   const currentConv = conversations.value.find(c => c.id === currentConversationId.value)
@@ -1539,6 +1577,13 @@ marked.use(
 )
 
 
+/**
+ * 🔧 前端不再处理LaTeX，后端已完成所有规范化
+ */
+const fixLatexInContent = (content: string): string => {
+  if (!content) return ''
+  return content
+}
 
 /**
  * 清理用户消息，移除OCR识别内容
@@ -1546,10 +1591,42 @@ marked.use(
 const cleanUserMessage = (content: string) => {
   if (!content) return ''
 
+  console.log('[cleanUserMessage] 原始内容:', content.substring(0, 100))
+
   // 移除【图片识别内容】部分（包括标题和后面的内容）
   let cleaned = content.replace(/\n\n【图片识别内容】\n[\s\S]*$/, '')
 
-  // 处理换行符
+  // 🔧 使用字符串替换修复裸露的LaTeX命令
+  // 检测并替换 \triangle
+  if (cleaned.includes('\\triangle')) {
+    console.log('[cleanUserMessage] 检测到 \\triangle，准备修复')
+    cleaned = cleaned.replace(/\\triangle/g, '$\\triangle$')
+  }
+
+  // 检测并替换 ∼ (Unicode相似符号)
+  if (cleaned.includes('∼')) {
+    console.log('[cleanUserMessage] 检测到 Unicode ∼')
+    cleaned = cleaned.replace(/∼/g, '$\\sim$')
+  }
+
+  // 其他LaTeX符号
+  cleaned = cleaned
+    .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '$\\frac{$1}{$2}$')
+    .replace(/\\sim /g, '$\\sim$ ')
+    .replace(/\\implies /g, '$\\implies$ ')
+    .replace(/\\pm/g, '$\\pm$')
+    .replace(/\\times/g, '$\\times$')
+    .replace(/\\div/g, '$\\div$')
+    .replace(/\\sqrt\{([^}]+)\}/g, '$\\sqrt{$1}$')
+
+  console.log('[cleanUserMessage] 修复后:', cleaned.substring(0, 100))
+
+  // 如果包含数学公式，使用formatMessage渲染
+  if (cleaned.includes('$')) {
+    return formatMessage(cleaned)
+  }
+
+  // 否则只处理换行符
   return cleaned.replace(/\n/g, '<br>')
 }
 
@@ -1561,12 +1638,12 @@ const formatMessage = (content: string) => {
     console.log('原始内容:', content.substring(0, 200) + '...')
 
     // 检测内容是否已经是HTML格式（避免重复处理）
-    // 如果包含 KaTeX 渲染后的标记或其他HTML标签，说明已经被处理过
+    // 如果包含HTML标签或KaTeX渲染标记，直接返回
     if (content.includes('<span class="katex') ||
-        content.includes('<p>') ||
-        content.includes('<div>') ||
-        content.includes('class="katex-html"')) {
-      console.log('⚠️ 内容已经是HTML格式，跳过处理')
+        content.includes('class="katex-html"') ||
+        (content.includes('<p>') && content.includes('</p>')) ||
+        (content.includes('<div>') && content.includes('</div>'))) {
+      console.log('⚠️ 内容已是HTML格式，跳过处理')
       return content
     }
 
@@ -1577,6 +1654,10 @@ const formatMessage = (content: string) => {
     // 清理AI输出中的HTML标签，但保留数学公式
     content = cleanHtmlTags(content)
     console.log('清理HTML标签后:', content.substring(0, 200) + '...')
+
+    // 🔧 修复裸露的LaTeX命令（在markdown渲染之前）
+    content = fixLatexInContent(content)
+    console.log('LaTeX修复后:', content.substring(0, 200) + '...')
 
     // 使用新的markdown渲染工具
     const result = renderMarkdownToHtml(content)
@@ -1958,7 +2039,6 @@ document.addEventListener('click', () => {
 .chat-title {
   color: rgba(255, 255, 255, 0.9);
   font-size: 14px;
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2080,7 +2160,6 @@ document.addEventListener('click', () => {
   display: inline-block;
   cursor: pointer;
   border-radius: 12px;
-  overflow: hidden;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
@@ -2352,7 +2431,6 @@ document.addEventListener('click', () => {
   max-width: 90vw;
   max-height: 80vh;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-  overflow: hidden;
 }
 
 .modal-header {
@@ -2578,7 +2656,6 @@ document.addEventListener('click', () => {
   font-size: 14px;
   font-weight: 500;
   white-space: nowrap;
-  overflow: hidden;
   text-overflow: ellipsis;
 }
 
@@ -2610,7 +2687,6 @@ document.addEventListener('click', () => {
   width: 80px;
   height: 80px;
   border-radius: 12px;
-  overflow: hidden;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
@@ -2767,7 +2843,6 @@ document.addEventListener('click', () => {
   border-radius: 8px;
   box-shadow: 0 5px 20px rgba(0, 0, 0, 0.5);
   z-index: 1000;
-  overflow: hidden;
 }
 
 .menu-item {
@@ -2935,7 +3010,6 @@ document.addEventListener('click', () => {
   font-weight: 500;
   color: rgba(255, 255, 255, 0.9);
   white-space: nowrap;
-  overflow: hidden;
   text-overflow: ellipsis;
 }
 
@@ -2948,7 +3022,7 @@ document.addEventListener('click', () => {
   display: flex;
   justify-content: center;
   align-items: center;
-  height: 100vh;
+  height: 100%;
   background: #f5f5f5;
   color: #666;
   font-size: 14px;
@@ -3239,7 +3313,6 @@ document.addEventListener('click', () => {
   margin: 16px 0;
   background: rgba(255, 255, 255, 0.02);
   border-radius: 8px;
-  overflow: hidden;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   table-layout: auto;
   display: table;
@@ -3643,7 +3716,6 @@ document.addEventListener('click', () => {
     box-shadow: 0 24px 70px rgba(0, 0, 0, 0.7),
                 0 10px 40px rgba(0, 0, 0, 0.5),
                 inset 0 1px 0 rgba(255, 255, 255, 0.05);
-    overflow: hidden;
     animation: modalSlideIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
     backdrop-filter: blur(20px);
   }
@@ -3735,7 +3807,6 @@ document.addEventListener('click', () => {
     border-radius: 12px;
     cursor: pointer;
     position: relative;
-    overflow: hidden;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     text-align: center;
     border: 1px solid;

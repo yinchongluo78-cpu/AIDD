@@ -6,6 +6,8 @@ import { analyzeHomework } from '../services/tongyi'
 import { searchDocumentChunks } from '../services/documentParser'
 import { getSignedUrl } from '../services/oss'
 import { chatgptService } from '../services/chatgpt'
+import { getFullMathStyleSpec } from '../prompts/mathStyle'
+import { renderMathMarkdown, batchRenderMessages } from '../utils/renderMath'
 
 const router = Router()
 
@@ -96,7 +98,10 @@ router.get('/:id/messages', authenticateToken, async (req: AuthRequest, res) => 
       })
     )
 
-    res.json(messagesWithSignedUrls)
+    // 🔥 兜底：为没有 htmlContent 的历史消息生成 HTML
+    const messagesWithHtml = batchRenderMessages(messagesWithSignedUrls as any)
+
+    res.json(messagesWithHtml)
   } catch (error) {
     console.error('获取消息错误:', error)
     res.status(500).json({ message: '获取消息失败' })
@@ -104,6 +109,28 @@ router.get('/:id/messages', authenticateToken, async (req: AuthRequest, res) => 
 })
 
 // 流式响应端点
+// 🔧 自动修复裸露的LaTeX命令，确保正确渲染
+function fixLatexContent(content: string): string {
+  return content
+    // 🎯 首先转换LaTeX标准格式到KaTeX格式
+    .replace(/\\\(/g, '$')  // \( → $
+    .replace(/\\\)/g, '$')  // \) → $
+    .replace(/\\\[/g, '$$') // \[ → $$
+    .replace(/\\\]/g, '$$') // \] → $$
+    // 修复常见的裸露LaTeX命令
+    .replace(/\\triangle(?![a-zA-Z])/g, '$\\triangle$')
+    .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '$\\frac{$1}{$2}$')
+    .replace(/\\sim(?![a-zA-Z])/g, '$\\sim$')
+    .replace(/\\implies(?![a-zA-Z])/g, '$\\implies$')
+    .replace(/\\pm(?![a-zA-Z])/g, '$\\pm$')
+    .replace(/\\times(?![a-zA-Z])/g, '$\\times$')
+    .replace(/\\div(?![a-zA-Z])/g, '$\\div$')
+    .replace(/\\sqrt\{([^}]+)\}/g, '$\\sqrt{$1}$')
+    // 清理重复的美元符号
+    .replace(/\$+/g, '$')
+    .replace(/\$\s*\$/g, '')
+}
+
 router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const { content, imageUrl, documentIds, model } = req.body
@@ -144,12 +171,15 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
       }
     }
 
+    // 🔧 修复用户消息中的LaTeX公式
+    const fixedUserContent = content ? fixLatexContent(content) : content
+
     // 保存用户消息（记录 imageOssKey，兼容生产库字段）
     console.log('📝 准备保存用户消息，数据:', {
       conversationId,
       conversationIdType: typeof conversationId,
       role: 'user',
-      content: content?.substring(0, 50) + '...',
+      content: fixedUserContent?.substring(0, 50) + '...',
       imageOssKey: initialOssKey
     })
 
@@ -159,7 +189,7 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
         data: {
           conversationId,
           role: 'user',
-          content,
+          content: fixedUserContent,
           imageOssKey: initialOssKey
         }
       })
@@ -238,6 +268,10 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
           // 使用签名URL调用OCR，传入用户问题以智能识别
           ocrResult = await analyzeHomework(signedUrl, content || '')
           console.log(`✅ OCR识别完成，结果长度: ${ocrResult.length}`)
+
+          // 🔧 修复OCR结果中的LaTeX公式
+          ocrResult = fixLatexContent(ocrResult)
+          console.log(`✅ OCR LaTeX修复完成`)
         }
       } catch (error) {
         console.error('❌ 图片识别失败:', error)
@@ -482,30 +516,7 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
    - 下方如果有【备用资料库】内容，只在用户明确要学习时使用
    - 答题/测验时完全忽略知识库内容
 
-4️⃣ **数学公式输出规范（非常重要！必须严格遵守）：**
-
-   🚨 **绝对禁止的错误（小学生完全看不懂）：**
-   - ❌ 裸露的LaTeX命令：\\frac{AB}{CO}、\\triangle、\\implies
-   - ❌ 混用LaTeX和Unicode：\\triangle ABF ∼ △COE
-   - ❌ 任何不带美元符号的数学符号
-
-   ✅ **正确做法（小学生能看懂）：**
-   - 所有分数必须加美元符号：$\\frac{AB}{CO}$
-   - 所有三角形符号：$\\triangle ABC$
-   - 所有相似符号：$\\sim$
-   - 所有推导符号：$\\implies$
-
-   **具体规则：**
-   - 行内公式：用单个美元符号包裹，如 $E=mc^2$、$\\frac{OF}{OE}$
-   - 独立公式：用两个美元符号包裹，如 $$x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}$$
-   - 化学式：$\\ce{H2O}$、$\\ce{CO2}$
-
-   **错误对比示例：**
-   - ❌ 错误：\\frac{AB}{CO} = \\frac{BF}{OE}（小学生看不懂）
-   - ✅ 正确：$\\frac{AB}{CO} = \\frac{BF}{OE}$（小学生能看懂）
-
-   - ❌ 错误：\\triangle ABF ∼ △COE（混乱）
-   - ✅ 正确：$\\triangle ABF \\sim \\triangle COE$（清晰）
+4️⃣ ${getFullMathStyleSpec()}
 
 5️⃣ **知识库内容使用要求（严格遵守）：**
    ⚠️ **如果用户消息中包含【资料 1】【资料 2】等标记：**
@@ -593,7 +604,7 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
 
     // 检查请求JSON的总大小
     const requestBody = {
-      model: 'deepseek-reasoner',  // 🚀 升级到 DeepSeek R1，推理能力更强
+      model: 'deepseek-chat',  // 使用对话模型，适合教育场景
       messages: apiRequestMessages,
       temperature: 0.7,
       max_tokens: 2000,
@@ -639,22 +650,35 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
 
         // 处理 ChatGPT 流式响应
         for await (const content of streamGenerator) {
-          responseContent += content
-          console.log('发送ChatGPT流式片段:', content.substring(0, 20))
-          res.write(`data: ${JSON.stringify({ type: 'stream', content })}\n\n`)
+          const fixedContent = fixLatexContent(content)
+          responseContent += fixedContent
+          console.log('发送ChatGPT流式片段:', fixedContent.substring(0, 20))
+          res.write(`data: ${JSON.stringify({ type: 'stream', content: fixedContent })}\n\n`)
         }
 
-        // 保存助手消息
+        // 保存助手消息（同时生成 HTML）
+        const htmlContent = renderMathMarkdown(responseContent)
         const assistantMessage = await prisma.message.create({
           data: {
             conversationId,
             role: 'assistant',
             content: responseContent,
+            htmlContent,  // 后端渲染的 HTML
             citations: citations.length > 0 ? (JSON.stringify(citations) as any) : null
           }
         })
 
-        res.write(`data: ${JSON.stringify({ type: 'done', data: assistantMessage })}\n\n`)
+        // 🔥 只返回必要字段
+        const responseData = {
+          id: assistantMessage.id,
+          createdAt: assistantMessage.createdAt,
+          role: assistantMessage.role,
+          content: assistantMessage.content,
+          htmlContent: assistantMessage.htmlContent,
+          citations: assistantMessage.citations
+        }
+
+        res.write(`data: ${JSON.stringify({ type: 'done', data: responseData })}\n\n`)
         res.end()
 
         // 生成标题
@@ -704,16 +728,27 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
 
         // 如果已经有部分内容，保存并通知前端
         if (responseContent.trim()) {
+          const finalContent = responseContent + '\n\n[注意：响应因超时被截断]'
+          const htmlContent = renderMathMarkdown(finalContent)
           prisma.message.create({
             data: {
               conversationId,
               role: 'assistant',
-              content: responseContent + '\n\n[注意：响应因超时被截断]',
+              content: finalContent,
+              htmlContent,  // 后端渲染的 HTML
               citations: citations.length > 0 ? (JSON.stringify(citations) as any) : null
             }
           }).then(assistantMessage => {
             if (!res.writableEnded) {
-              res.write(`data: ${JSON.stringify({ type: 'done', data: assistantMessage })}\n\n`)
+              const responseData = {
+                id: assistantMessage.id,
+                createdAt: assistantMessage.createdAt,
+                role: assistantMessage.role,
+                content: assistantMessage.content,
+                htmlContent: assistantMessage.htmlContent,
+                citations: assistantMessage.citations
+              }
+              res.write(`data: ${JSON.stringify({ type: 'done', data: responseData })}\n\n`)
               res.end()
             }
           }).catch(err => {
@@ -732,9 +767,19 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
       }
     }, 5000) // 每5秒检查一次
 
+    let chunkCount = 0 // 统计收到的chunk数量
     response.data.on('data', (chunk: Buffer) => {
       lastDataTime = Date.now() // 更新最后收到数据的时间
-      buffer += chunk.toString()
+      chunkCount++
+      const chunkStr = chunk.toString()
+
+      // 🔍 记录前3个chunk的原始内容，用于调试
+      if (chunkCount <= 3) {
+        console.log(`📦 收到第${chunkCount}个chunk，长度:`, chunkStr.length)
+        console.log(`📦 原始内容:`, chunkStr.substring(0, 500))
+      }
+
+      buffer += chunkStr
       const lines = buffer.split('\n')
       buffer = lines.pop() || ''
 
@@ -768,17 +813,42 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
               return
             }
 
+            // 🔥 生成后端渲染的 HTML
+            console.log('📝 开始渲染 HTML，原始内容长度:', responseContent.length)
+            console.log('📝 原始内容前200字符:', responseContent.substring(0, 200))
+
+            const htmlContent = renderMathMarkdown(responseContent)
+
+            console.log('📝 HTML 渲染完成，HTML长度:', htmlContent.length)
+            console.log('📝 HTML 前200字符:', htmlContent.substring(0, 200))
+            console.log('📝 HTML 是否为空:', htmlContent === '' || !htmlContent)
+
             prisma.message.create({
               data: {
                 conversationId,
                 role: 'assistant',
                 content: responseContent,
+                htmlContent,  // 后端渲染的 HTML
                 citations: citations.length > 0 ? (JSON.stringify(citations) as any) : null
               }
             }).then(assistantMessage => {
               console.log('✅ Assistant消息保存成功，ID:', assistantMessage.id)
+              console.log('✅ 保存的 htmlContent 长度:', assistantMessage.htmlContent?.length || 0)
+
+              // 🔥 关键优化：只返回前端需要的字段，避免 SSE 传输大数据
+              const responseData = {
+                id: assistantMessage.id,
+                createdAt: assistantMessage.createdAt,
+                role: assistantMessage.role,
+                content: assistantMessage.content,
+                htmlContent: assistantMessage.htmlContent,  // 包含渲染后的 HTML
+                citations: assistantMessage.citations
+              }
+
+              console.log('✅ 准备返回的数据大小:', JSON.stringify(responseData).length, '字节')
+
               if (!res.writableEnded) {
-                res.write(`data: ${JSON.stringify({ type: 'done', data: assistantMessage })}\n\n`)
+                res.write(`data: ${JSON.stringify({ type: 'done', data: responseData })}\n\n`)
                 res.end()
               }
             }).catch(err => {
@@ -798,6 +868,11 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
             try {
               const parsed = JSON.parse(data)
 
+              // 🔍 记录前3个解析的对象，用于调试
+              if (chunkCount <= 5) {
+                console.log(`🔍 解析的JSON对象 #${chunkCount}:`, JSON.stringify(parsed, null, 2))
+              }
+
               // 🔥 检查是否有错误或拒绝信息
               if (parsed.error) {
                 console.error('❌ DeepSeek返回错误:', JSON.stringify(parsed.error, null, 2))
@@ -814,11 +889,12 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
               }
 
               if (content) {
-                responseContent += content
+                const fixedContent = fixLatexContent(content)
+                responseContent += fixedContent
                 // 发送流式内容
-                console.log('📤 发送流式片段:', content.substring(0, 20))
+                console.log('📤 发送流式片段:', fixedContent.substring(0, 20))
                 if (!res.writableEnded) {
-                  res.write(`data: ${JSON.stringify({ type: 'stream', content })}\n\n`)
+                  res.write(`data: ${JSON.stringify({ type: 'stream', content: fixedContent })}\n\n`)
                 }
               }
             } catch (e) {
@@ -933,13 +1009,16 @@ router.post('/:id/messages/stream', authenticateToken, async (req: AuthRequest, 
 
   } catch (error: any) {
     console.error('流式响应错误:', error)
-    // 兜底：返回用户友好的完成消息，避免“服务器错误”直接展示
+    // 兜底：返回用户友好的完成消息，避免"服务器错误"直接展示
     try {
+      const errorContent = '抱歉，图片解析或生成回复时出现问题。请换一张更清晰的图片，或直接用文字描述问题，我会继续帮你。'
+      const htmlContent = renderMathMarkdown(errorContent)
       const assistantMessage = await prisma.message.create({
         data: {
           conversationId: req.params.id,
           role: 'assistant',
-          content: '抱歉，图片解析或生成回复时出现问题。请换一张更清晰的图片，或直接用文字描述问题，我会继续帮你。'
+          content: errorContent,
+          htmlContent  // 后端渲染的 HTML
         }
       })
       res.write(`data: ${JSON.stringify({ type: 'done', data: assistantMessage })}\n\n`)
@@ -1147,12 +1226,14 @@ router.post('/:id/messages', authenticateToken, async (req: AuthRequest, res) =>
       }
     }
 
-    // 保存 AI 回复
+    // 保存 AI 回复（同时生成 HTML）
+    const htmlContent = renderMathMarkdown(aiResponse)
     const assistantMessage = await prisma.message.create({
       data: {
         conversationId,
         role: 'assistant',
-        content: aiResponse
+        content: aiResponse,
+        htmlContent  // 后端渲染的 HTML
       }
     })
 

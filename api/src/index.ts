@@ -12,6 +12,7 @@ import uploadRoutes from './routes/upload'
 import adminRoutes from './routes/admin'
 import diagnosticRoutes from './routes/diagnostic'
 import assessmentRoutes from './routes/assessment'
+import shareRoutes from './routes/share'
 
 dotenv.config()
 
@@ -51,6 +52,8 @@ app.use('/api/upload', uploadRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/diagnostic', diagnosticRoutes)
 app.use('/api/assessment', assessmentRoutes)
+app.use('/api/conversations', shareRoutes) // 分享相关路由
+app.use('/api/shared', shareRoutes) // 公开分享访问
 
 app.listen(PORT, () => {
   console.log(`后端服务运行在 http://localhost:${PORT}`)

@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Chat from './pages/Chat.vue'
 import Kb from './pages/Kb.vue'
 import Login from './pages/Login.vue'
+import Share from './pages/Share.vue'
 import DiagnosticTest from './pages/DiagnosticTest.vue'
 import AssessmentCenter from './pages/AssessmentCenter.vue'
 import AssessmentTest from './pages/AssessmentTest.vue'
@@ -21,6 +22,12 @@ const router = createRouter({
       path: '/login',
       name: 'Login',
       component: Login
+    },
+    {
+      path: '/share/:shareId',
+      name: 'Share',
+      component: Share
+      // 不需要登录认证
     },
     {
       path: '/chat',

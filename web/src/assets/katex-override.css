@@ -1,19 +1,129 @@
-/* KaTeX样式覆盖 - 用于优化数学公式显示 */
+/*
+ * KaTeX 教科书风格样式覆盖
+ * 目标：让数学公式看起来像中国小学数学教科书（人教版）
+ */
 
+/* === 行内公式样式 === */
 .katex {
-  font-size: 1.1em;
+  font-size: 1.15em;              /* 稍大字号，更清晰 */
+  font-weight: 400;                /* 正常字重 */
+  line-height: 1.6;                /* 增加行高，避免拥挤 */
+  vertical-align: baseline;        /* 基线对齐 */
+  color: #1a1a1a;                  /* 深黑色，像教科书印刷 */
 }
 
+/* === 独立成行的公式（$$...$$）=== */
 .katex-display {
-  margin: 1em 0;
-  text-align: center;
+  margin: 1.2em 0;                 /* 上下留白 */
+  text-align: center;              /* 居中显示 */
+  padding: 0.8em 0;                /* 额外内边距 */
 }
 
 .katex-display > .katex {
+  font-size: 1.25em;               /* 显示公式比行内公式更大 */
+  font-weight: 500;                /* 稍粗，更醒目 */
   text-align: center;
 }
 
-/* 确保在深色主题下也能正常显示 */
+/* === 分数样式（教科书风格）=== */
+.katex .mfrac {
+  margin: 0 0.2em;                 /* 分数左右留白 */
+}
+
+.katex .frac-line {
+  border-bottom-width: 0.08em;     /* 稍粗的分数线 */
+}
+
+.katex .mfrac > .vlist-t {
+  vertical-align: middle;          /* 垂直居中 */
+}
+
+/* === 根号样式 === */
+.katex .sqrt {
+  margin: 0 0.1em;
+}
+
+.katex .sqrt > .vlist-t {
+  border-left-width: 0.08em;       /* 稍粗的根号 */
+}
+
+/* === 上标/下标 === */
+.katex .msupsub {
+  font-size: 0.85em;               /* 上下标稍小 */
+}
+
+/* === 特殊：结论行高亮 === */
+/* 如果AI输出包含"结论："，可以在Chat.vue中添加特殊class */
+.conclusion-line {
+  background-color: #fff3cd;       /* 淡黄色背景 */
+  padding: 0.5em 1em;
+  border-left: 4px solid #ffc107;  /* 左侧黄色边框 */
+  margin: 1em 0;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.conclusion-line .katex {
+  font-size: 1.2em;                /* 结论中的公式更大 */
+  font-weight: 500;
+  color: #d84315;                  /* 深橙色，醒目 */
+}
+
+/* === 确保深色模式兼容性 === */
 .katex .katex-html {
-  color: inherit;
+  color: inherit;                  /* 继承父元素颜色 */
+}
+
+/* 深色模式下的特殊处理 */
+@media (prefers-color-scheme: dark) {
+  .katex {
+    color: #e0e0e0;                /* 浅色文字 */
+  }
+
+  .conclusion-line {
+    background-color: #3e2723;     /* 深棕色背景 */
+    border-left-color: #ff9800;    /* 橙色边框 */
+  }
+
+  .conclusion-line .katex {
+    color: #ff9800;                /* 橙色公式 */
+  }
+}
+
+/* === 教科书风格的排版细节 === */
+
+/* 1. 几何符号（△、∠等）周围的间距 */
+.katex .mord + .mbin,
+.katex .mbin + .mord {
+  margin: 0 0.15em;                /* 运算符周围留白 */
+}
+
+/* 2. 等号周围的间距（更宽松） */
+.katex .mrel {
+  margin: 0 0.3em;                 /* 关系符号（=、<、>等）周围留白 */
+}
+
+/* 3. 提升公式清晰度 */
+.katex {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 4. 避免公式被换行截断 */
+.katex {
+  white-space: nowrap;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+/* 5. 移动端适配 */
+@media (max-width: 768px) {
+  .katex {
+    font-size: 1.1em;              /* 移动端稍小 */
+  }
+
+  .katex-display > .katex {
+    font-size: 1.15em;
+  }
 }
