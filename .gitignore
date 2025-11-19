@@ -13,3 +13,7 @@ dist/
 api/.env
 web/.env
 
+api/.env.backup
+api/.env.production.backup
+api/.env.production
+*.backup
