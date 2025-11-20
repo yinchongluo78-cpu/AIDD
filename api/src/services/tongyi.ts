@@ -53,7 +53,9 @@ export async function analyzeImage(imageUrl: string, prompt: string = '请分析
           ]
         },
         parameters: {
-          max_tokens: 3000  // 增加到3000，确保能完整识别复杂题目
+          max_tokens: 3000,  // 增加到3000，确保能完整识别复杂题目
+          temperature: 0.1,  // 🔥 降低随机性，提高识别稳定性
+          top_p: 0.8         // 控制采样范围
         }
       },
       {
@@ -89,13 +91,27 @@ export async function analyzeImage(imageUrl: string, prompt: string = '请分析
 }
 
 export async function analyzeHomework(imageUrl: string, userQuestion?: string): Promise<string> {
-  let prompt = `请完整、准确地识别这张图片中的所有文字内容，包括：
-1. 题目描述（包括所有条件和背景）
-2. 所有问题（如"问题1"、"问题2"、"问题3"等，一个都不要遗漏）
-3. 所有数学公式（用LaTeX格式表示）
-4. 所有文字说明和注释
+  let prompt = `请完整、准确地识别这张图片中的**所有内容**，包括：
 
-⚠️ 重要：请确保识别完整，不要遗漏任何问题或内容，特别是有多个小问的题目。`
+1. **图形/图表描述**（非常重要！）
+   - 如有几何图形，请详细描述：形状、标签（如"I"、"II"、"III"）、位置关系、遮挡区域等
+   - 如有数学图表，请描述：坐标系、曲线、标记点等
+   - 如有表格，请完整列出所有行列数据
+
+2. **题目描述**（包括所有条件和背景）
+
+3. **所有问题和选项**
+   - 如"问题1"、"问题2"等，一个都不要遗漏
+   - 选择题的所有选项（A、B、C、D等）
+
+4. **所有数学公式**（用LaTeX格式表示）
+
+5. **所有文字说明和注释**
+
+⚠️ **重要**：
+- 图形信息同样重要，请务必描述图中的几何图形、标签和结构
+- 确保识别完整，不要遗漏任何问题或内容
+- 特别注意有多个小问的题目`
 
   if (userQuestion) {
     prompt += `\n\n用户的问题：${userQuestion}`
